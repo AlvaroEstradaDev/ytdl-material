@@ -4,28 +4,38 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      # Keep breaking changes easy to review by batching only patch/minor updates.
+      patch-updates:
+        update-types:
+          - "patch"
+      minor-updates:
+        update-types:
+          - "minor"
   - package-ecosystem: "github-actions"
     directory: "/.github/workflows"
     schedule:
       interval: "daily"
+    groups:
+      # Keep breaking changes easy to review by batching only patch/minor updates.
+      patch-updates:
+        update-types:
+          - "patch"
+      minor-updates:
+        update-types:
+          - "minor"
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "daily"
     groups:
-      angular-toolchain:
-        patterns:
-          - "@angular/*"
-          - "@angular-devkit/*"
-          - "@schematics/angular"
-          - "typescript"
-          - "zone.js"
-          - "rxjs"
-      lint-tooling:
-        patterns:
-          - "eslint"
-          - "@typescript-eslint/*"
-          - "@angular-eslint/*"
+      # Keep breaking changes easy to review by batching only patch/minor updates.
+      patch-updates:
+        update-types:
+          - "patch"
+      minor-updates:
+        update-types:
+          - "minor"
     ignore:
       - dependency-name: "@angular-devkit/build-angular"
         update-types:
@@ -34,3 +44,11 @@ updates:
     directory: "/backend/"
     schedule:
       interval: "daily"
+    groups:
+      # Keep breaking changes easy to review by batching only patch/minor updates.
+      patch-updates:
+        update-types:
+          - "patch"
+      minor-updates:
+        update-types:
+          - "minor"
