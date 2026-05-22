@@ -1108,7 +1108,7 @@ exports.deleteSubscriptionFile = async (sub, file, deleteForever, file_uid = nul
     await db_api.removeRecord('files', {uid: file_uid});
 
     let filePath = appendedBasePath;
-    const ext = (sub.type && sub.type === 'audio') ? '.mp3' : '.mp4'
+    const ext = (sub.type && sub.type === 'audio') ? utils.getAudioExtension() : '.mp4'
     var jsonPath = path.join(__dirname,filePath,name+'.info.json');
     var videoFilePath = path.join(__dirname,filePath,name+ext);
     var imageFilePath = path.join(__dirname,filePath,name+'.jpg');
@@ -1402,7 +1402,7 @@ async function generateArgsForSubscription(sub, user_uid, redownload = false, de
     if (sub.type && sub.type === 'audio') {
         qualityPath = ['-f', 'bestaudio']
         qualityPath.push('-x');
-        qualityPath.push('--audio-format', 'mp3');
+        qualityPath.push('--audio-format', utils.getAudioFormat());
     } else {
         if (!sub.maxQuality || sub.maxQuality === 'best') qualityPath = ['-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4'];
         else qualityPath = ['-f', `bestvideo[height<=${sub.maxQuality}]+bestaudio/best[height<=${sub.maxQuality}]`, '--merge-output-format', 'mp4'];
@@ -1814,7 +1814,7 @@ async function getSubscriptionSubtitleSidecarPaths(media_path) {
 
 async function getExistingSubscriptionSidecarPaths(media_path, type = 'video') {
     const file_path_no_extension = utils.removeFileExtension(media_path);
-    const expected_extension = type === 'audio' ? '.mp3' : '.mp4';
+    const expected_extension = type === 'audio' ? utils.getAudioExtension() : '.mp4';
     const actual_extension = path.extname(media_path);
     const sidecar_candidates = [
         `${media_path}.info.json`,

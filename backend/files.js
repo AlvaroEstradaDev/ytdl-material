@@ -10,8 +10,9 @@ const utils = require('./utils')
 const logger = require('./logger');
 const PLAYLIST_FILE_DELETE_BATCH_SIZE = 10;
 const PLAYER_SUBTITLE_SIDECAR_BASE_SUFFIX = '.player-subtitles';
+const AUDIO_FORMATS = ['mp3', 'opus', 'm4a', 'flac', 'wav', 'vorbis'];
 const MEDIA_EXTENSIONS_BY_TYPE = {
-    audio: ['mp3'],
+    audio: AUDIO_FORMATS,
     video: ['mp4']
 };
 const SIDECAR_SCAN_EXTENSIONS = ['json', 'webp', 'jpg', 'png', 'nfo', 'vtt'];
@@ -26,7 +27,7 @@ function escapeRegex(text = '') {
 }
 
 function getExpectedMediaExtension(type = 'video') {
-    return type === 'audio' ? '.mp3' : '.mp4';
+    return type === 'audio' ? utils.getAudioExtension() : '.mp4';
 }
 
 function getMediaExtensions(type = 'video') {

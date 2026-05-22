@@ -104,6 +104,20 @@
             </div>
             <div class="col-12 mt-3">
               <mat-form-field class="text-field" color="accent">
+                <mat-label i18n="Audio format">Audio format</mat-label>
+                <mat-select color="accent" [(ngModel)]="new_config['Downloader']['audio-format']">
+                  <mat-option value="mp3">MP3</mat-option>
+                  <mat-option value="opus">Opus</mat-option>
+                  <mat-option value="m4a">M4A (AAC)</mat-option>
+                  <mat-option value="flac">FLAC</mat-option>
+                  <mat-option value="wav">WAV</mat-option>
+                  <mat-option value="vorbis">Vorbis (OGG)</mat-option>
+                </mat-select>
+                <mat-hint><ng-container i18n="Audio format setting hint">Audio format for audio-only downloads. Requires ffmpeg for non-mp3 formats.</ng-container></mat-hint>
+              </mat-form-field>
+            </div>
+            <div class="col-12 mt-3">
+              <mat-form-field class="text-field" color="accent">
                 <mat-label i18n="Video folder path">Video folder path</mat-label>
                 <input matInput [(ngModel)]="new_config['Downloader']['path-video']" required>
                 <mat-hint><ng-container i18n="Video path setting input hint">Path for video downloads. It is relative to YTDL-Material's root folder.</ng-container></mat-hint>

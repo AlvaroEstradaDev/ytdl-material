@@ -58,6 +58,7 @@ export class MainComponent implements OnInit {
   allowAdvancedDownload = false;
   useDefaultDownloadingAgent = true;
   customDownloadingAgent = null;
+  selectedAudioFormat: string = '';
 
   // cache
   cachedAvailableFormats: { [key: string]: any } = Object.create(null);
@@ -449,8 +450,9 @@ export class MainComponent implements OnInit {
     const urls = this.getURLArray(effective_url);
     for (let i = 0; i < urls.length; i++) {
       const url = sanitizeSingleWatchUrl ? this.sanitizeYouTubeWatchUrl(urls[i]) : urls[i];
+      const audioFormat = this.audioOnly && this.selectedAudioFormat ? this.selectedAudioFormat : null;
       this.postsService.downloadFile(url, type as FileType, (customQualityConfiguration || selected_quality === '' || typeof selected_quality !== 'string' ? null : selected_quality),
-        customQualityConfiguration, customArgs, additionalArgs, customOutput, youtubeUsername, youtubePassword, cropFileSettings, disableSponsorBlock, channelSearchPlaylist, selected_audio_language, selected_subtitle_language, selected_subtitle_type).subscribe(res => {
+        customQualityConfiguration, customArgs, additionalArgs, customOutput, youtubeUsername, youtubePassword, cropFileSettings, disableSponsorBlock, channelSearchPlaylist, selected_audio_language, selected_subtitle_language, selected_subtitle_type, audioFormat).subscribe(res => {
           const queued_downloads = Array.isArray(res['downloads']) && res['downloads'].length > 0
             ? res['downloads']
             : (res['download'] ? [res['download']] : []);
@@ -594,7 +596,8 @@ export class MainComponent implements OnInit {
   }
 
   downloadFileFromServer(file: DatabaseFile, type: string): void {
-    const ext = type === 'audio' ? 'mp3' : 'mp4'
+    const audioFormat = this.postsService.config?.Downloader?.['audio-format'] || 'mp3';
+    const ext = type === 'audio' ? audioFormat : 'mp4'
     this.postsService.downloadFileFromServer(file.uid).subscribe(res => {
       const blob: Blob = res;
       saveAs(blob, decodeURIComponent(file.id) + `.${ext}`);
@@ -927,6 +930,9 @@ export class MainComponent implements OnInit {
     this.selectedQuality = '';
     this.selectedSubtitleLanguage = '';
     this.selectedSubtitleSource = '';
+    if (!next_value) {
+      this.selectedAudioFormat = '';
+    }
     localStorage.setItem('audioOnly', next_value.toString());
     this.argsChanged();
   }

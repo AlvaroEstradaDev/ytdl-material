@@ -69,4 +69,8 @@ export type DownloadRequest = {
      * Treat a YouTube channel search URL as a playlist-style download.
      */
     channelSearchPlaylist?: boolean;
+    /**
+     * Override global audio format for this download.
+     */
+    audioFormat?: string;
 };

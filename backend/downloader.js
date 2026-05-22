@@ -1936,7 +1936,8 @@ exports.downloadQueuedFile = async(download_uid, customDownloadHandler = null) =
                 // get filepath with no extension
                 const filepath_no_extension = utils.removeFileExtension(output_json['_filename']);
 
-                const ext = type === 'audio' ? '.mp3' : '.mp4';
+                const resolvedAudioFormat = type === 'audio' ? (options?.audioFormat || utils.getAudioFormat()) : 'mp4';
+                const ext = type === 'audio' ? ('.' + resolvedAudioFormat) : '.mp4';
                 var full_file_path = filepath_no_extension + ext;
                 var file_name = filepath_no_extension.substring(fileFolderPath.length, filepath_no_extension.length);
 
@@ -1957,7 +1958,7 @@ exports.downloadQueuedFile = async(download_uid, customDownloadHandler = null) =
                     }
                 }
 
-                if (type === 'audio') {
+                if (type === 'audio' && resolvedAudioFormat === 'mp3') {
                     let tags = {
                         title: output_json['title'],
                         artist: output_json['artist'] ? output_json['artist'] : output_json['uploader']
@@ -2184,7 +2185,7 @@ exports.generateArgs = async (url, type, options, user_uid = null, simulated = f
 
         if (is_audio && !options.skip_audio_args) {
             downloadConfig.push('-x');
-            downloadConfig.push('--audio-format', 'mp3');
+            downloadConfig.push('--audio-format', options.audioFormat || utils.getAudioFormat());
         }
 
         if (youtubeUsername && youtubePassword) {

@@ -232,7 +232,8 @@ const DEFAULT_CONFIG = {
         "min_sleep_between_downloads": 0,
         "playlist_chunk_size": 20,
         "download_rate_limit": "",
-        "skip_join_only_videos": false
+        "skip_join_only_videos": false,
+        "audio-format": "mp3"
       },
       "Extra": {
         "title_top": "ytdl-material",

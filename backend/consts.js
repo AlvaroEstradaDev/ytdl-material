@@ -82,6 +82,10 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_skip_join_only_videos',
         'path': 'YtdlMaterial.Downloader.skip_join_only_videos'
     },
+    'ytdl_audio_format': {
+        'key': 'ytdl_audio_format',
+        'path': 'YtdlMaterial.Downloader.audio-format'
+    },
 
     // Extra
     'ytdl_title_top': {

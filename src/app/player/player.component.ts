@@ -92,6 +92,10 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   downloading = false;
 
+  get isAudio(): boolean {
+    return this.currentItem?.type?.startsWith('audio/') ?? false;
+  }
+
   save_volume_timer = null;
   original_volume = null;
 
@@ -449,7 +453,8 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   downloadFile(): void {
     const filename = this.currentItem?.title ?? this.playlist[0]?.title;
-    const ext = (this.currentItem?.type === 'audio/mp3') ? '.mp3' : '.mp4';
+    const audioFormat = this.postsService.config?.Downloader?.['audio-format'] || 'mp3';
+    const ext = this.isAudio ? `.${audioFormat}` : '.mp4';
     const uid = this.currentItem?.uid ?? this.uid;
     this.downloading = true;
     this.postsService.downloadFileFromServer(uid, this.uuid).subscribe(res => {
@@ -576,7 +581,12 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   createMediaObject(file_obj: DatabaseFile): IMedia {
-    const mime_type = file_obj.isAudio ? 'audio/mp3' : 'video/mp4';
+    const audioFormat = this.postsService.config?.Downloader?.['audio-format'] || 'mp3';
+    const audioMimeTypes: Record<string, string> = {
+      mp3: 'audio/mp3', opus: 'audio/opus', m4a: 'audio/mp4',
+      flac: 'audio/flac', wav: 'audio/wav', vorbis: 'audio/ogg'
+    };
+    const mime_type = file_obj.isAudio ? (audioMimeTypes[audioFormat] || 'audio/mpeg') : 'video/mp4';
     const hasChapterPayload = Array.isArray(file_obj.chapters);
     const normalizedChapters = hasChapterPayload ? this.normalizeChapters(file_obj.chapters) : undefined;
     const hasSubtitlePayload = Array.isArray(file_obj.subtitles);
@@ -843,7 +853,7 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canToggleSubtitles(): boolean {
-    return this.currentItem?.type !== 'audio/mp3'
+    return !this.isAudio
       && (this.currentSubtitleTracks.length > 0 || this.getAvailableMediaTextTrackCount() > 0);
   }
 
@@ -885,7 +895,7 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
     const media_element = this.mediaElement?.nativeElement;
     const subtitle_signature = this.getSubtitleTrackSignature(this.currentSubtitleTracks);
 
-    if (!media_element || this.currentItem?.type === 'audio/mp3') {
+    if (!media_element || this.isAudio) {
       this.loadedSubtitleTrackSignature = subtitle_signature;
       queueMicrotask(() => this.showDefaultSubtitleTrack());
       return;
@@ -1039,7 +1049,7 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   onPlayerMouseMove(event: MouseEvent): void {
-    if (this.currentItem?.type === 'audio/mp3' || this.currentChapters.length === 0) {
+    if (this.isAudio || this.currentChapters.length === 0) {
       this.chapterTimelineVisible = false;
       return;
     }

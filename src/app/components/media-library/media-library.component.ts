@@ -833,7 +833,8 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
 
   downloadFile(file: DatabaseFile): void {
     const type = (file.isAudio ? 'audio' : 'video') as FileType;
-    const ext = type === 'audio' ? '.mp3' : '.mp4'
+    const audioFormat = this.postsService.config?.Downloader?.['audio-format'] || 'mp3';
+    const ext = type === 'audio' ? `.${audioFormat}` : '.mp4'
     const name = file.id;
     this.downloading_content[file.uid] = true;
     this.postsService.downloadFileFromServer(file.uid).subscribe(res => {

@@ -1,16 +1,16 @@
 @if (playlist.length > 0 && show_player && currentItem) {
   <div style="height: 100%">
-    <div style="height: 100%" [ngClass]="(currentItem.type === 'audio/mp3') ? null : 'container-video'">
+    <div style="height: 100%" [ngClass]="isAudio ? null : 'container-video'">
       <div style="max-width: 100%; margin-left: 0px; height: 100%">
         <mat-drawer-container style="height: 100%" class="example-container" autosize>
-          <div style="height: fit-content" [ngClass]="(currentItem.type === 'audio/mp3') ? 'audio-col' : 'video-col'">
-            <vg-player style="height: fit-content; max-height: 75vh" (onPlayerReady)="onPlayerReady($event)" (mousemove)="onPlayerMouseMove($event)" (mouseleave)="onPlayerMouseLeave()" [style.background-color]="(currentItem.type === 'audio/mp3') ? postsService.theme.drawer_color : 'black'">
-              <video [ngClass]="(currentItem.type === 'audio/mp3') ? 'audio-styles' : 'video-styles'" #media class="video-player" [vgMedia]="$any(media)" [src]="currentItem.src" id="singleVideo" preload="auto" controls playsinline>
+          <div style="height: fit-content" [ngClass]="isAudio ? 'audio-col' : 'video-col'">
+            <vg-player style="height: fit-content; max-height: 75vh" (onPlayerReady)="onPlayerReady($event)" (mousemove)="onPlayerMouseMove($event)" (mouseleave)="onPlayerMouseLeave()" [style.background-color]="isAudio ? postsService.theme.drawer_color : 'black'">
+              <video [ngClass]="isAudio ? 'audio-styles' : 'video-styles'" #media class="video-player" [vgMedia]="$any(media)" [src]="currentItem.src" id="singleVideo" preload="auto" controls playsinline>
                 @for (subtitle of currentSubtitleTracks; track subtitle.src ?? subtitle.language ?? $index) {
                   <track [attr.kind]="subtitle.kind || 'subtitles'" [attr.label]="subtitle.label" [attr.srclang]="subtitle.language" [attr.src]="subtitle.src" [attr.default]="subtitle.default ? '' : null">
                 }
               </video>
-              @if (currentChapters.length > 0 && currentItem.type !== 'audio/mp3') {
+              @if (currentChapters.length > 0 && !isAudio) {
                 <div class="chapter-overlay" [class.visible]="chapterTimelineVisible">
                   <div class="chapter-overlay-header">
                     <div class="chapter-overlay-current">

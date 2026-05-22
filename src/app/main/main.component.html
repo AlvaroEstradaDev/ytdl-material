@@ -108,6 +108,24 @@
               }
               </mat-form-field>
             </div>
+            @if (audioOnly) {
+              <div class="main-pane-select-group">
+                <div class="main-pane-action-field-label" i18n="Audio format select label">Format</div>
+                <mat-form-field appearance="outline" color="accent" class="main-pane-action-select" subscriptSizing="dynamic">
+                  <mat-select [ngModelOptions]="{standalone: true}" [(ngModel)]="selectedAudioFormat">
+                    <mat-option [value]="''">
+                                      Default
+                                  </mat-option>
+                    <mat-option value="mp3">MP3</mat-option>
+                    <mat-option value="opus">Opus</mat-option>
+                    <mat-option value="m4a">M4A</mat-option>
+                    <mat-option value="flac">FLAC</mat-option>
+                    <mat-option value="wav">WAV</mat-option>
+                    <mat-option value="vorbis">Vorbis</mat-option>
+                  </mat-select>
+                </mat-form-field>
+              </div>
+            }
           }
         </div>
         <div class="main-pane-download-group">
