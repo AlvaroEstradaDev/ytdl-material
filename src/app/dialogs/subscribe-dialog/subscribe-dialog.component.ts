@@ -28,6 +28,7 @@ export class SubscribeDialogComponent implements OnInit {
 
   customFileOutput = '';
   customArgs = '';
+  audioFormat: string = null;
 
   available_qualities = [
     {
@@ -88,7 +89,7 @@ export class SubscribeDialogComponent implements OnInit {
         timerange = 'now-' + this.timerange_amount.toString() + this.timerange_unit;
       }
       this.postsService.createSubscription(this.url, this.name, timerange, this.maxQuality,
-                                          this.audioOnlyMode, this.customArgs, this.customFileOutput, this.useSubfolder).subscribe(res => {
+                                          this.audioOnlyMode, this.customArgs, this.customFileOutput, this.useSubfolder, this.audioFormat).subscribe(res => {
         this.subscribing = false;
         if (res['new_sub']) {
           this.dialogRef.close(res['new_sub']);
