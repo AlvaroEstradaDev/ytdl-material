@@ -11,4 +11,5 @@ export type SubscribeRequest = {
     customFileOutput?: string;
     useSubfolder?: boolean;
     maxQuality?: string;
+    audioFormat?: string;
 };
