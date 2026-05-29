@@ -1745,6 +1745,7 @@ app.post('/api/subscribe', optionalJwt, async (req, res) => {
     let customArgs = req.body.customArgs;
     let customOutput = req.body.customFileOutput;
     let useSubfolder = req.body.useSubfolder;
+    let audioFormat = req.body.audioFormat;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
     const new_sub = {
                         name: name,
@@ -1767,6 +1768,10 @@ app.post('/api/subscribe', optionalJwt, async (req, res) => {
 
     if (customOutput && customOutput !== '') {
         new_sub.custom_output = customOutput;
+    }
+
+    if (audioFormat && audioFormat !== '') {
+        new_sub.audio_format = audioFormat;
     }
 
     const result_obj = await subscriptions_api.subscribe(new_sub, user_uid);
