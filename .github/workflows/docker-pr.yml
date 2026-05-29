@@ -40,13 +40,10 @@ jobs:
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
 
-      - name: create-json
-        id: create-json
-        uses: jsdaniell/create-json@v1.2.3
-        with:
-          name: "version.json"
-          json: '{"type": "docker", "tag": "nightly", "commit": "${{ steps.vars.outputs.sha_short }}", "date": "${{ steps.date.outputs.date }}"}'
-          dir: 'backend/'
+      - name: Generate version.json
+        run: |
+          mkdir -p backend
+          echo '{"type":"docker","tag":"nightly","commit":"${{ steps.vars.outputs.sha_short }}","date":"${{ steps.date.outputs.date }}"}' > backend/version.json
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -84,7 +81,7 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=docker-pr
+          cache-to: type=gha,mode=max,scope=docker-pr
           push: ${{ steps.build_params.outputs.push }}
           tags: ${{ steps.build_params.outputs.tags }}
