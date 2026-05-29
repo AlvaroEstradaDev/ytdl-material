@@ -613,9 +613,9 @@ export class PostsService {
         return this.http.post<DeletePlaylistResponse>(this.path + 'deletePlaylist', body, this.httpOptions);
     }
 
-    createSubscription(url, name, timerange = null, maxQuality = 'best', audioOnly = false, customArgs: string = null, customFileOutput: string = null, useSubfolder = true) {
+    createSubscription(url, name, timerange = null, maxQuality = 'best', audioOnly = false, customArgs: string = null, customFileOutput: string = null, useSubfolder = true, audioFormat: string = null) {
         const body: SubscribeRequest = {url: url, name: name, timerange: timerange, maxQuality: maxQuality,
-            audioOnly: audioOnly, customArgs: customArgs, customFileOutput: customFileOutput, useSubfolder: useSubfolder};
+            audioOnly: audioOnly, customArgs: customArgs, customFileOutput: customFileOutput, useSubfolder: useSubfolder, audioFormat: audioFormat};
         return this.http.post<SubscribeResponse>(this.path + 'subscribe', body, this.httpOptions);
     }
     
