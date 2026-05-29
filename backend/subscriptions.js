@@ -1108,7 +1108,7 @@ exports.deleteSubscriptionFile = async (sub, file, deleteForever, file_uid = nul
     await db_api.removeRecord('files', {uid: file_uid});
 
     let filePath = appendedBasePath;
-    const ext = (sub.type && sub.type === 'audio') ? utils.getAudioExtension() : '.mp4'
+    const ext = (sub.type && sub.type === 'audio') ? (sub.audio_format ? '.' + sub.audio_format : utils.getAudioExtension()) : '.mp4'
     var jsonPath = path.join(__dirname,filePath,name+'.info.json');
     var videoFilePath = path.join(__dirname,filePath,name+ext);
     var imageFilePath = path.join(__dirname,filePath,name+'.jpg');
@@ -1375,7 +1375,8 @@ exports.generateOptionsForSubscriptionDownload = (sub, user_uid) => {
         customFileFolderPath: getAppendedBasePath(sub, basePath),
         customOutput: sub.custom_output ? `${sub.custom_output}` : `${default_output}`,
         customArchivePath: path.join(basePath, 'archives', utils.getSubscriptionPathName(sub)),
-        additionalArgs: sub.custom_args
+        additionalArgs: sub.custom_args,
+        audioFormat: sub.audio_format || null
     }
 
     return base_download_options;
@@ -1402,7 +1403,7 @@ async function generateArgsForSubscription(sub, user_uid, redownload = false, de
     if (sub.type && sub.type === 'audio') {
         qualityPath = ['-f', 'bestaudio']
         qualityPath.push('-x');
-        qualityPath.push('--audio-format', utils.getAudioFormat());
+        qualityPath.push('--audio-format', sub.audio_format || utils.getAudioFormat());
     } else {
         if (!sub.maxQuality || sub.maxQuality === 'best') qualityPath = ['-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4'];
         else qualityPath = ['-f', `bestvideo[height<=${sub.maxQuality}]+bestaudio/best[height<=${sub.maxQuality}]`, '--merge-output-format', 'mp4'];
