@@ -1937,8 +1937,20 @@ exports.downloadQueuedFile = async(download_uid, customDownloadHandler = null) =
                 const filepath_no_extension = utils.removeFileExtension(output_json['_filename']);
 
                 const resolvedAudioFormat = type === 'audio' ? (options?.audioFormat || utils.getAudioFormat()) : 'mp4';
-                const ext = type === 'audio' ? ('.' + resolvedAudioFormat) : '.mp4';
+                let ext = type === 'audio' ? ('.' + resolvedAudioFormat) : '.mp4';
                 var full_file_path = filepath_no_extension + ext;
+
+                if (type === 'audio' && !fs.existsSync(full_file_path)) {
+                    const audio_exts = ['mp3', 'opus', 'm4a', 'flac', 'wav', 'vorbis', 'ogg', 'webm'];
+                    for (const try_ext of audio_exts) {
+                        const candidate = filepath_no_extension + '.' + try_ext;
+                        if (fs.existsSync(candidate)) {
+                            full_file_path = candidate;
+                            ext = '.' + try_ext;
+                            break;
+                        }
+                    }
+                }
                 var file_name = filepath_no_extension.substring(fileFolderPath.length, filepath_no_extension.length);
 
                 if (type === 'video' && url.includes('twitch.tv/videos/') && url.split('twitch.tv/videos/').length > 1

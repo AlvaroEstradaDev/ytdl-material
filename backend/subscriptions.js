@@ -2114,7 +2114,7 @@ async function checkVideosForFreshUploads(sub, user_uid) {
 }
 
 async function checkVideoIfBetterExists(file_obj, sub, user_uid) {
-    const new_path = file_obj['path'].substring(0, file_obj['path'].length - 4);
+    const new_path = utils.removeFileExtension(file_obj['path']);
     const downloadConfig = await generateArgsForSubscription(sub, user_uid, true, new_path);
     logger.verbose(`Checking if a better version of the fresh upload ${file_obj['id']} exists.`);
     // simulate a download to verify that a better version exists
