@@ -22,6 +22,7 @@ export class EditSubscriptionDialogComponent implements OnInit {
   timerange_unit = 'days';
   audioOnlyMode = null;
   download_all = null;
+  audioFormat: string = null;
 
   available_qualities = [
     {
@@ -72,6 +73,7 @@ export class EditSubscriptionDialogComponent implements OnInit {
     delete this.new_sub['videos'];
 
     this.audioOnlyMode = this.sub.type === 'audio';
+    this.audioFormat = this.sub.audio_format || null;
     this.download_all = !this.sub.timerange;
 
     if (this.sub.timerange) {
@@ -104,6 +106,11 @@ export class EditSubscriptionDialogComponent implements OnInit {
   }
 
   saveSubscription() {
+    if (this.audioFormat) {
+      this.new_sub.audio_format = this.audioFormat;
+    } else {
+      delete this.new_sub.audio_format;
+    }
     this.postsService.updateSubscription(this.new_sub).subscribe(res => {
       this.sub = this.new_sub;
       this.new_sub = JSON.parse(JSON.stringify(this.sub));
