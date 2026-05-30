@@ -20,7 +20,8 @@
       "min_sleep_between_downloads": 0,
       "download_rate_limit": "",
       "playlist_chunk_size": 100,
-      "skip_join_only_videos": false
+      "skip_join_only_videos": false,
+      "audio-format": "mp3"
     },
     "Extra": {
       "title_top": "ytdl-material",
@@ -104,7 +105,10 @@
     },
     "Database": {
       "use_local_db": true,
-      "mongodb_connection_string": "mongodb://127.0.0.1:27017/?compressors=zlib"
+      "mongodb_connection_string": "mongodb://127.0.0.1:27017/?compressors=zlib",
+      "remote_db_type": "",
+      "db_migrate": "",
+      "postgresdb_connection_string": ""
     },
     "Advanced": {
       "default_downloader": "youtube-dl",
