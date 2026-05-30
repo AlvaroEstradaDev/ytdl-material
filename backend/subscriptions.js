@@ -1467,6 +1467,18 @@ async function generateArgsForSubscription(sub, user_uid, redownload = false, de
         downloadConfig.push('--write-thumbnail');
     }
 
+    if (downloader_api.isYoutubeMusicUrl(sub.url) && sub.type === 'audio') {
+        if (!downloadConfig.includes('--embed-thumbnail')) {
+            downloadConfig.push('--embed-thumbnail');
+        }
+        if (!downloadConfig.includes('--add-metadata')) {
+            downloadConfig.push('--add-metadata');
+        }
+        if (!downloadConfig.includes('--write-thumbnail')) {
+            downloadConfig.push('--write-thumbnail');
+        }
+    }
+
     const rate_limit = config_api.getConfigItem('ytdl_download_rate_limit');
     if (rate_limit && downloadConfig.indexOf('-r') === -1 && downloadConfig.indexOf('--limit-rate') === -1) {
         downloadConfig.push('-r', rate_limit);
@@ -1482,6 +1494,8 @@ async function generateArgsForSubscription(sub, user_uid, redownload = false, de
 
     return downloadConfig;
 }
+
+exports.generateArgsForSubscription = generateArgsForSubscription;
 
 function hasSubscriptionDiscoveryDateFilter(args = []) {
     if (!Array.isArray(args)) return false;

@@ -1,5 +1,5 @@
 /* eslint-disable no-undef */
-const { assert, files_api, config_api } = require('./test-shared');
+const { assert, files_api, config_api, subscriptions_api } = require('./test-shared');
 const downloader_api = require('../downloader');
 
 describe('YouTube Music Source Detection', function() {
@@ -165,5 +165,57 @@ describe('YouTube Music ID3 Tags', function() {
         const tags = downloader_api.buildYoutubeMusicTags(output_json);
         assert.strictEqual(tags.artist, 'Some Channel');
         assert.strictEqual(tags.album, undefined);
+    });
+});
+
+describe('YouTube Music Subscription Args', function() {
+    const original_config = {};
+
+    beforeEach(function() {
+        original_config.ytdl_custom_args = config_api.getConfigItem('ytdl_custom_args');
+        original_config.ytdl_use_cookies = config_api.getConfigItem('ytdl_use_cookies');
+        original_config.ytdl_default_downloader = config_api.getConfigItem('ytdl_default_downloader');
+        original_config.ytdl_include_thumbnail = config_api.getConfigItem('ytdl_include_thumbnail');
+        original_config.ytdl_download_rate_limit = config_api.getConfigItem('ytdl_download_rate_limit');
+
+        config_api.setConfigItem('ytdl_custom_args', '');
+        config_api.setConfigItem('ytdl_use_cookies', false);
+        config_api.setConfigItem('ytdl_default_downloader', 'yt-dlp');
+        config_api.setConfigItem('ytdl_include_thumbnail', false);
+        config_api.setConfigItem('ytdl_download_rate_limit', '');
+    });
+
+    afterEach(function() {
+        for (const [key, value] of Object.entries(original_config)) {
+            config_api.setConfigItem(key, value);
+        }
+    });
+
+    it('generateArgsForSubscription includes music flags for music.youtube.com subscription', async function() {
+        const sub = {
+            url: 'https://music.youtube.com/playlist?list=LM',
+            name: 'My Music',
+            id: 'test-sub-id',
+            type: 'audio',
+            isPlaylist: true,
+            user_uid: null
+        };
+        const args = await subscriptions_api.generateArgsForSubscription(sub, null);
+        assert(args.includes('--embed-thumbnail'), 'Expected --embed-thumbnail');
+        assert(args.includes('--add-metadata'), 'Expected --add-metadata');
+        assert(args.includes('--write-thumbnail'), 'Expected --write-thumbnail');
+    });
+
+    it('generateArgsForSubscription does NOT include music flags for regular youtube.com subscription', async function() {
+        const sub = {
+            url: 'https://www.youtube.com/playlist?list=PLtest',
+            name: 'Regular YT',
+            id: 'test-sub-id-2',
+            type: 'audio',
+            isPlaylist: true,
+            user_uid: null
+        };
+        const args = await subscriptions_api.generateArgsForSubscription(sub, null);
+        assert(!args.includes('--embed-thumbnail'), 'Did not expect --embed-thumbnail for regular youtube');
     });
 });
