@@ -154,8 +154,8 @@ export class DownloadsComponent implements OnInit, OnDestroy {
 
       if (filters.dateRange) {
         const ts = download.timestamp_start * 1000;
-        if (filters.dateRange.from && ts < filters.dateRange.from.getTime()) return false;
-        if (filters.dateRange.to && ts > filters.dateRange.to.getTime()) return false;
+        if (filters.dateRange.from && ts < filters.dateRange.from) return false;
+        if (filters.dateRange.to && ts > filters.dateRange.to) return false;
       }
 
       if (filters.subscriptions?.length) {
@@ -822,6 +822,10 @@ export class DownloadsComponent implements OnInit, OnDestroy {
 
   applyFilters(): void {
     this.activeFilters = JSON.parse(JSON.stringify(this.pendingFilters));
+    if (this.activeFilters.dateRange?.preset) {
+      const range = this.computeDatePresetRange(this.activeFilters.dateRange.preset);
+      this.activeFilters.dateRange = { from: range.from, to: range.to, preset: this.activeFilters.dateRange.preset };
+    }
     this.dataSource.filter = JSON.stringify(this.activeFilters);
     if (this.paginator) this.paginator.firstPage();
     this.filterMenuOpenFor = null;
@@ -853,17 +857,17 @@ export class DownloadsComponent implements OnInit, OnDestroy {
     this.filterMenuOpenFor = null;
   }
 
-  computeDatePresetRange(preset: string): { from: Date; to: Date } {
+  computeDatePresetRange(preset: string): { from: number; to: number } {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
     switch (preset) {
-      case 'today': return { from: today, to };
-      case 'last7': return { from: new Date(today.getTime() - 6 * 86400000), to };
-      case 'last30': return { from: new Date(today.getTime() - 29 * 86400000), to };
-      case 'thisMonth': return { from: new Date(now.getFullYear(), now.getMonth(), 1), to };
-      case 'allTime': return { from: new Date(0), to: new Date(now.getTime() + 86400000) };
-      default: return { from: new Date(0), to };
+      case 'today': return { from: today.getTime(), to };
+      case 'last7': return { from: new Date(today.getTime() - 6 * 86400000).getTime(), to };
+      case 'last30': return { from: new Date(today.getTime() - 29 * 86400000).getTime(), to };
+      case 'thisMonth': return { from: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), to };
+      case 'allTime': return { from: 0, to: new Date(now.getTime() + 86400000).getTime() };
+      default: return { from: 0, to };
     }
   }
 
@@ -937,7 +941,7 @@ interface BatchAggregateDownload extends DownloadWithContainer {
 interface DownloadFilters {
   titleRegex?: string;
   progressStages?: string[];
-  dateRange?: { from?: Date; to?: Date; preset?: string };
+  dateRange?: { from?: number; to?: number; preset?: string };
   subscriptions?: string[];
 }
 
