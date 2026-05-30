@@ -13,25 +13,27 @@
           </button>
           @if (filterMenuOpenFor === 'timestamp_start') {
             <div class="filter-menu" (click)="$event.stopPropagation()">
-              @for (preset of datePresetOptions; track preset.key) {
-                <mat-radio-button [checked]="pendingFilters.dateRange?.preset === preset.key"
-                  (change)="pendingFilters.dateRange = { preset: preset.key }">
-                  {{preset.label}}
-                </mat-radio-button>
-              }
-              <mat-divider></mat-divider>
-              <mat-form-field appearance="outline" class="filter-date-field">
-                <mat-label i18n="From date">From</mat-label>
-                <input matInput [matDatepicker]="fromPicker" [ngModel]="pendingFilters.dateRange?.from ? new Date(pendingFilters.dateRange.from) : null" (ngModelChange)="setDateRangeFrom($event)">
-                <mat-datepicker-toggle matSuffix [for]="fromPicker"></mat-datepicker-toggle>
-                <mat-datepicker #fromPicker></mat-datepicker>
-              </mat-form-field>
-              <mat-form-field appearance="outline" class="filter-date-field">
-                <mat-label i18n="To date">To</mat-label>
-                <input matInput [matDatepicker]="toPicker" [ngModel]="pendingFilters.dateRange?.to ? new Date(pendingFilters.dateRange.to) : null" (ngModelChange)="setDateRangeTo($event)">
-                <mat-datepicker-toggle matSuffix [for]="toPicker"></mat-datepicker-toggle>
-                <mat-datepicker #toPicker></mat-datepicker>
-              </mat-form-field>
+              <div class="filter-menu-content">
+                @for (preset of datePresetOptions; track preset.key) {
+                  <mat-radio-button [checked]="pendingFilters.dateRange?.preset === preset.key"
+                    (change)="pendingFilters.dateRange = { preset: preset.key }">
+                    {{preset.label}}
+                  </mat-radio-button>
+                }
+                <mat-divider></mat-divider>
+                <mat-form-field appearance="outline" class="filter-date-field">
+                  <mat-label i18n="From date">From</mat-label>
+                  <input matInput [matDatepicker]="fromPicker" [ngModel]="pendingFilters.dateRange?.from ? new Date(pendingFilters.dateRange.from) : null" (ngModelChange)="setDateRangeFrom($event)">
+                  <mat-datepicker-toggle matSuffix [for]="fromPicker"></mat-datepicker-toggle>
+                  <mat-datepicker #fromPicker></mat-datepicker>
+                </mat-form-field>
+                <mat-form-field appearance="outline" class="filter-date-field">
+                  <mat-label i18n="To date">To</mat-label>
+                  <input matInput [matDatepicker]="toPicker" [ngModel]="pendingFilters.dateRange?.to ? new Date(pendingFilters.dateRange.to) : null" (ngModelChange)="setDateRangeTo($event)">
+                  <mat-datepicker-toggle matSuffix [for]="toPicker"></mat-datepicker-toggle>
+                  <mat-datepicker #toPicker></mat-datepicker>
+                </mat-form-field>
+              </div>
               <div class="filter-menu-actions">
                 <button mat-button (click)="clearPendingFilter('timestamp_start')" i18n="Clear">Clear</button>
                 <button mat-flat-button color="primary" (click)="applyFilters()" i18n="Apply">Apply</button>
@@ -53,10 +55,12 @@
           </button>
           @if (filterMenuOpenFor === 'title') {
             <div class="filter-menu" (click)="$event.stopPropagation()">
-              <mat-form-field appearance="outline" class="filter-regex-field">
-                <mat-label i18n="Search regex">Search regex</mat-label>
-                <input matInput [(ngModel)]="pendingFilters.titleRegex">
-              </mat-form-field>
+              <div class="filter-menu-content">
+                <mat-form-field appearance="outline" class="filter-regex-field">
+                  <mat-label i18n="Search regex">Search regex</mat-label>
+                  <input matInput [(ngModel)]="pendingFilters.titleRegex">
+                </mat-form-field>
+              </div>
               <div class="filter-menu-actions">
                 <button mat-button (click)="clearPendingFilter('title')" i18n="Clear">Clear</button>
                 <button mat-flat-button color="primary" (click)="applyFilters()" i18n="Apply">Apply</button>
@@ -82,20 +86,22 @@
           </button>
           @if (filterMenuOpenFor === 'sub_name') {
             <div class="filter-menu" (click)="$event.stopPropagation()">
-              <div class="filter-select-all">
-                <mat-checkbox [checked]="pendingFilters.subscriptions?.length === getUniqueSubscriptionNames().length && getUniqueSubscriptionNames().length > 0"
-                  [indeterminate]="pendingFilters.subscriptions?.length > 0 && pendingFilters.subscriptions?.length < getUniqueSubscriptionNames().length"
-                  (change)="$event.checked ? (pendingFilters.subscriptions = getUniqueSubscriptionNames().slice()) : (pendingFilters.subscriptions = [])"
-                  i18n="Select all">Select all</mat-checkbox>
-              </div>
-              <mat-divider></mat-divider>
-              <div class="filter-checkbox-list">
-                @for (name of getUniqueSubscriptionNames(); track name) {
-                  <mat-checkbox [checked]="pendingFilters.subscriptions?.includes(name)"
-                    (change)="toggleArrayFilterItem('subscriptions', name)">
-                    {{name}}
-                  </mat-checkbox>
-                }
+              <div class="filter-menu-content">
+                <div class="filter-select-all">
+                  <mat-checkbox [checked]="pendingFilters.subscriptions?.length === getUniqueSubscriptionNames().length && getUniqueSubscriptionNames().length > 0"
+                    [indeterminate]="pendingFilters.subscriptions?.length > 0 && pendingFilters.subscriptions?.length < getUniqueSubscriptionNames().length"
+                    (change)="$event.checked ? (pendingFilters.subscriptions = getUniqueSubscriptionNames().slice()) : (pendingFilters.subscriptions = [])"
+                    i18n="Select all">Select all</mat-checkbox>
+                </div>
+                <mat-divider></mat-divider>
+                <div class="filter-checkbox-list">
+                  @for (name of getUniqueSubscriptionNames(); track name) {
+                    <mat-checkbox [checked]="pendingFilters.subscriptions?.includes(name)"
+                      (change)="toggleArrayFilterItem('subscriptions', name)">
+                      {{name}}
+                    </mat-checkbox>
+                  }
+                </div>
               </div>
               <div class="filter-menu-actions">
                 <button mat-button (click)="clearPendingFilter('sub_name')" i18n="Clear">Clear</button>
@@ -125,19 +131,21 @@
           </button>
           @if (filterMenuOpenFor === 'percent_complete') {
             <div class="filter-menu" (click)="$event.stopPropagation()">
-              @for (group of progressStageOptions; track group.group ?? 'ungrouped') {
-                <div class="filter-stage-group">
-                  @if (group.group) {
-                    <div class="filter-stage-group-label">{{group.group}}</div>
-                  }
-                  @for (item of group.items; track item.key) {
-                    <mat-checkbox [checked]="pendingFilters.progressStages?.includes(item.key)"
-                      (change)="toggleArrayFilterItem('progressStages', item.key)">
-                      {{item.label}}
-                    </mat-checkbox>
-                  }
-                </div>
-              }
+              <div class="filter-menu-content">
+                @for (group of progressStageOptions; track group.group ?? 'ungrouped') {
+                  <div class="filter-stage-group">
+                    @if (group.group) {
+                      <div class="filter-stage-group-label">{{group.group}}</div>
+                    }
+                    @for (item of group.items; track item.key) {
+                      <mat-checkbox [checked]="pendingFilters.progressStages?.includes(item.key)"
+                        (change)="toggleArrayFilterItem('progressStages', item.key)">
+                        {{item.label}}
+                      </mat-checkbox>
+                    }
+                  </div>
+                }
+              </div>
               <div class="filter-menu-actions">
                 <button mat-button (click)="clearPendingFilter('percent_complete')" i18n="Clear">Clear</button>
                 <button mat-flat-button color="primary" (click)="applyFilters()" i18n="Apply">Apply</button>
