@@ -565,6 +565,31 @@ function getYouTubeChannelSearchDetails(url = '') {
     };
 }
 
+function isYoutubeMusicUrl(url = '') {
+    if (typeof url !== 'string' || url.trim() === '') return false;
+    try {
+        const parsed_url = new URL(url);
+        return parsed_url.hostname.replace(/^www\./, '').toLowerCase() === 'music.youtube.com';
+    } catch (e) {
+        try {
+            const parsed_url = new URL(`https://${url}`);
+            return parsed_url.hostname.replace(/^www\./, '').toLowerCase() === 'music.youtube.com';
+        } catch (secondary_error) {
+            return false;
+        }
+    }
+}
+
+function buildYoutubeMusicTags(output_json = {}) {
+    const tags = {
+        title: output_json['title'],
+        artist: output_json['artist'] || output_json['uploader']
+    };
+    if (output_json['album']) tags.album = output_json['album'];
+    if (output_json['track_number']) tags.trackNumber = output_json['track_number'];
+    return tags;
+}
+
 function isChannelSearchPlaylistDownload(url = '', options = {}) {
     if (!(options && options.channelSearchPlaylist === true)) return false;
     return !!getYouTubeChannelSearchDetails(url);
@@ -633,6 +658,8 @@ function buildPlaylistChunkRanges(total_items, chunk_size = DEFAULT_PLAYLIST_CHU
     return ranges;
 }
 exports.buildPlaylistChunkRanges = buildPlaylistChunkRanges;
+exports.isYoutubeMusicUrl = isYoutubeMusicUrl;
+exports.buildYoutubeMusicTags = buildYoutubeMusicTags;
 
 function formatChunkedPlaylistTitle(base_title = 'Playlist', chunk_range_label = null, chunk_index = null, chunk_count = null) {
     const normalized_title = typeof base_title === 'string' && base_title.trim() !== '' ? base_title.trim() : 'Playlist';
@@ -1970,13 +1997,19 @@ exports.downloadQueuedFile = async(download_uid, customDownloadHandler = null) =
                     }
                 }
 
-                if (type === 'audio' && resolvedAudioFormat === 'mp3') {
-                    let tags = {
-                        title: output_json['title'],
-                        artist: output_json['artist'] ? output_json['artist'] : output_json['uploader']
+                if (type === 'audio') {
+                    const download_url = download['url'] || '';
+                    const is_music = isYoutubeMusicUrl(download_url);
+                    if (resolvedAudioFormat === 'mp3') {
+                        let tags = is_music
+                            ? buildYoutubeMusicTags(output_json)
+                            : {
+                                title: output_json['title'],
+                                artist: output_json['artist'] ? output_json['artist'] : output_json['uploader']
+                            };
+                        let success = NodeID3.write(tags, utils.removeFileExtension(output_json['_filename']) + '.mp3');
+                        if (!success) logger.error('Failed to apply ID3 tag to audio file ' + output_json['_filename']);
                     }
-                    let success = NodeID3.write(tags, utils.removeFileExtension(output_json['_filename']) + '.mp3');
-                    if (!success) logger.error('Failed to apply ID3 tag to audio file ' + output_json['_filename']);
                 }
 
                 if (config_api.getConfigItem('ytdl_generate_nfo_files')) {
@@ -2286,6 +2319,18 @@ exports.generateArgs = async (url, type, options, user_uid = null, simulated = f
 
     // filter out incompatible args
     downloadConfig = filterArgs(downloadConfig, is_audio);
+
+    if (isYoutubeMusicUrl(url) && is_audio) {
+        if (!downloadConfig.includes('--embed-thumbnail')) {
+            downloadConfig.push('--embed-thumbnail');
+        }
+        if (!downloadConfig.includes('--add-metadata')) {
+            downloadConfig.push('--add-metadata');
+        }
+        if (!downloadConfig.includes('--write-thumbnail')) {
+            downloadConfig.push('--write-thumbnail');
+        }
+    }
 
     if (!simulated) logger.verbose(`${default_downloader} args being used (${downloadConfig.length} args)`);
     return downloadConfig;
