@@ -137,6 +137,34 @@ export class DownloadsComponent implements OnInit, OnDestroy {
     if (this.uids) this.displayedColumnsBig = this.displayedColumnsBig.filter(col => col !== 'sub_name');
     this.innerWidth = window.innerWidth;
     this.recalculateColumns();
+
+    this.dataSource.filterPredicate = (download: Download, filterStr: string) => {
+      if (!filterStr || filterStr === '{}') return true;
+      const filters: DownloadFilters = JSON.parse(filterStr);
+
+      if (filters.titleRegex) {
+        try {
+          if (!new RegExp(filters.titleRegex, 'i').test(download.title || '')) return false;
+        } catch { return true; }
+      }
+
+      if (filters.progressStages?.length) {
+        if (!filters.progressStages.includes(this.deriveStage(download))) return false;
+      }
+
+      if (filters.dateRange) {
+        const ts = download.timestamp_start * 1000;
+        if (filters.dateRange.from && ts < filters.dateRange.from.getTime()) return false;
+        if (filters.dateRange.to && ts > filters.dateRange.to.getTime()) return false;
+      }
+
+      if (filters.subscriptions?.length) {
+        if (!filters.subscriptions.includes(download.sub_name ?? 'N/A')) return false;
+      }
+
+      return true;
+    };
+
     if (this.postsService.initialized) {
       this.getCurrentDownloadsRecurring();
     } else {
@@ -174,6 +202,9 @@ export class DownloadsComponent implements OnInit, OnDestroy {
         this.dataSource.data = this.downloads;
         this.dataSource.paginator = this.paginator;
         this.dataSource.sort = this.sort;
+        if (Object.keys(this.activeFilters).length > 0) {
+          this.dataSource.filter = JSON.stringify(this.activeFilters);
+        }
         this.refreshOpenPlaylistProgressDialog();
         this.paused_download_exists = !!this.raw_downloads.find(download => download['paused'] && !download['error']);
         this.running_download_exists = !!this.raw_downloads.find(download => !download['paused'] && !download['finished']);
@@ -788,6 +819,72 @@ export class DownloadsComponent implements OnInit, OnDestroy {
       default: return false;
     }
   }
+
+  applyFilters(): void {
+    this.activeFilters = JSON.parse(JSON.stringify(this.pendingFilters));
+    this.dataSource.filter = JSON.stringify(this.activeFilters);
+    if (this.paginator) this.paginator.firstPage();
+    this.filterMenuOpenFor = null;
+  }
+
+  clearPendingFilter(column: string): void {
+    switch (column) {
+      case 'title':
+        this.pendingFilters.titleRegex = undefined;
+        break;
+      case 'timestamp_start':
+        this.pendingFilters.dateRange = undefined;
+        break;
+      case 'sub_name':
+        this.pendingFilters.subscriptions = [];
+        break;
+      case 'percent_complete':
+        this.pendingFilters.progressStages = [];
+        break;
+    }
+  }
+
+  openFilterMenu(column: string): void {
+    this.pendingFilters = JSON.parse(JSON.stringify(this.activeFilters));
+    this.filterMenuOpenFor = this.filterMenuOpenFor === column ? null : column;
+  }
+
+  closeFilterMenu(): void {
+    this.filterMenuOpenFor = null;
+  }
+
+  computeDatePresetRange(preset: string): { from: Date; to: Date } {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    switch (preset) {
+      case 'today': return { from: today, to };
+      case 'last7': return { from: new Date(today.getTime() - 6 * 86400000), to };
+      case 'last30': return { from: new Date(today.getTime() - 29 * 86400000), to };
+      case 'thisMonth': return { from: new Date(now.getFullYear(), now.getMonth(), 1), to };
+      case 'allTime': return { from: new Date(0), to: new Date(now.getTime() + 86400000) };
+      default: return { from: new Date(0), to };
+    }
+  }
+
+  getUniqueSubscriptionNames(): string[] {
+    const names = new Set<string>();
+    for (const download of this.dataSource.data) {
+      names.add(download.sub_name ?? 'N/A');
+    }
+    return Array.from(names).sort();
+  }
+
+  toggleArrayFilterItem(filterKey: 'progressStages' | 'subscriptions', value: string): void {
+    if (!this.pendingFilters[filterKey]) this.pendingFilters[filterKey] = [];
+    const arr = this.pendingFilters[filterKey]!;
+    const idx = arr.indexOf(value);
+    if (idx >= 0) arr.splice(idx, 1);
+    else arr.push(value);
+  }
+
+  get datePresetOptions() { return DATE_PRESET_OPTIONS; }
+  get progressStageOptions() { return PROGRESS_STAGE_OPTIONS; }
 }
 
 interface DownloadAction {
