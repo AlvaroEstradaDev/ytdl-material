@@ -889,6 +889,18 @@ export class DownloadsComponent implements OnInit, OnDestroy {
 
   get datePresetOptions() { return DATE_PRESET_OPTIONS; }
   get progressStageOptions() { return PROGRESS_STAGE_OPTIONS; }
+
+  setDateRangeFrom(date: Date | null): void {
+    if (!this.pendingFilters.dateRange) this.pendingFilters.dateRange = {};
+    this.pendingFilters.dateRange.from = date ? date.getTime() : undefined;
+    this.pendingFilters.dateRange.preset = undefined;
+  }
+
+  setDateRangeTo(date: Date | null): void {
+    if (!this.pendingFilters.dateRange) this.pendingFilters.dateRange = {};
+    this.pendingFilters.dateRange.to = date ? date.getTime() : undefined;
+    this.pendingFilters.dateRange.preset = undefined;
+  }
 }
 
 interface DownloadAction {

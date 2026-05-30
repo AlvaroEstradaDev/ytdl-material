@@ -1,16 +1,69 @@
-<div [hidden]="!(downloads && downloads.length > 0)">
+<div [hidden]="!(downloads && downloads.length > 0)" (click)="closeFilterMenu()">
   <div style="overflow: hidden;" [ngClass]="uids ? 'rounded mat-elevation-z2' : 'mat-elevation-z8'">
     <mat-table style="overflow: hidden" [ngClass]="uids ? 'rounded-top' : null" matSort [dataSource]="dataSource">
 
       <!-- Date Column -->
       <ng-container matColumnDef="timestamp_start">
-        <mat-header-cell *matHeaderCellDef mat-sort-header> <ng-container i18n="Date">Date</ng-container> </mat-header-cell>
+        <mat-header-cell *matHeaderCellDef>
+          <span mat-sort-header><ng-container i18n="Date">Date</ng-container></span>
+          <button class="filter-funnel-button" (click)="openFilterMenu('timestamp_start'); $event.stopPropagation()">
+            <svg class="filter-funnel-icon" [class.active]="isFilterActive('timestamp_start')" viewBox="0 0 24 24" width="18" height="18">
+              <path d="M3 4h18l-7 8.5V18l-4 2v-7.5L3 4z" [attr.fill]="isFilterActive('timestamp_start') ? 'white' : 'none'" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          @if (filterMenuOpenFor === 'timestamp_start') {
+            <div class="filter-menu" (click)="$event.stopPropagation()">
+              @for (preset of datePresetOptions; track preset.key) {
+                <mat-radio-button [checked]="pendingFilters.dateRange?.preset === preset.key"
+                  (change)="pendingFilters.dateRange = { preset: preset.key }">
+                  {{preset.label}}
+                </mat-radio-button>
+              }
+              <mat-divider></mat-divider>
+              <mat-form-field appearance="outline" class="filter-date-field">
+                <mat-label i18n="From date">From</mat-label>
+                <input matInput [matDatepicker]="fromPicker" [ngModel]="pendingFilters.dateRange?.from ? new Date(pendingFilters.dateRange.from) : null" (ngModelChange)="setDateRangeFrom($event)">
+                <mat-datepicker-toggle matSuffix [for]="fromPicker"></mat-datepicker-toggle>
+                <mat-datepicker #fromPicker></mat-datepicker>
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="filter-date-field">
+                <mat-label i18n="To date">To</mat-label>
+                <input matInput [matDatepicker]="toPicker" [ngModel]="pendingFilters.dateRange?.to ? new Date(pendingFilters.dateRange.to) : null" (ngModelChange)="setDateRangeTo($event)">
+                <mat-datepicker-toggle matSuffix [for]="toPicker"></mat-datepicker-toggle>
+                <mat-datepicker #toPicker></mat-datepicker>
+              </mat-form-field>
+              <div class="filter-menu-actions">
+                <button mat-button (click)="clearPendingFilter('timestamp_start')" i18n="Clear">Clear</button>
+                <button mat-flat-button color="primary" (click)="applyFilters()" i18n="Apply">Apply</button>
+              </div>
+            </div>
+          }
+        </mat-header-cell>
         <mat-cell *matCellDef="let element"> {{element.timestamp_start | date: 'short'}} </mat-cell>
       </ng-container>
 
       <!-- Title Column -->
       <ng-container matColumnDef="title">
-        <mat-header-cell *matHeaderCellDef mat-sort-header style="flex: 2"> <ng-container i18n="Title">Title</ng-container> </mat-header-cell>
+        <mat-header-cell *matHeaderCellDef style="flex: 2">
+          <span mat-sort-header><ng-container i18n="Title">Title</ng-container></span>
+          <button class="filter-funnel-button" (click)="openFilterMenu('title'); $event.stopPropagation()">
+            <svg class="filter-funnel-icon" [class.active]="isFilterActive('title')" viewBox="0 0 24 24" width="18" height="18">
+              <path d="M3 4h18l-7 8.5V18l-4 2v-7.5L3 4z" [attr.fill]="isFilterActive('title') ? 'white' : 'none'" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          @if (filterMenuOpenFor === 'title') {
+            <div class="filter-menu" (click)="$event.stopPropagation()">
+              <mat-form-field appearance="outline" class="filter-regex-field">
+                <mat-label i18n="Search regex">Search regex</mat-label>
+                <input matInput [(ngModel)]="pendingFilters.titleRegex">
+              </mat-form-field>
+              <div class="filter-menu-actions">
+                <button mat-button (click)="clearPendingFilter('title')" i18n="Clear">Clear</button>
+                <button mat-flat-button color="primary" (click)="applyFilters()" i18n="Apply">Apply</button>
+              </div>
+            </div>
+          }
+        </mat-header-cell>
         <mat-cell *matCellDef="let element" style="flex: 2">
           <span class="one-line" [matTooltip]="element.title ? element.title : null">
             {{element.title}}
@@ -20,7 +73,37 @@
 
       <!-- Subscription Column -->
       <ng-container matColumnDef="sub_name">
-        <mat-header-cell *matHeaderCellDef mat-sort-header> <ng-container i18n="Subscription">Subscription</ng-container> </mat-header-cell>
+        <mat-header-cell *matHeaderCellDef>
+          <span mat-sort-header><ng-container i18n="Subscription">Subscription</ng-container></span>
+          <button class="filter-funnel-button" (click)="openFilterMenu('sub_name'); $event.stopPropagation()">
+            <svg class="filter-funnel-icon" [class.active]="isFilterActive('sub_name')" viewBox="0 0 24 24" width="18" height="18">
+              <path d="M3 4h18l-7 8.5V18l-4 2v-7.5L3 4z" [attr.fill]="isFilterActive('sub_name') ? 'white' : 'none'" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          @if (filterMenuOpenFor === 'sub_name') {
+            <div class="filter-menu" (click)="$event.stopPropagation()">
+              <div class="filter-select-all">
+                <mat-checkbox [checked]="pendingFilters.subscriptions?.length === getUniqueSubscriptionNames().length && getUniqueSubscriptionNames().length > 0"
+                  [indeterminate]="pendingFilters.subscriptions?.length > 0 && pendingFilters.subscriptions?.length < getUniqueSubscriptionNames().length"
+                  (change)="$event.checked ? (pendingFilters.subscriptions = getUniqueSubscriptionNames().slice()) : (pendingFilters.subscriptions = [])"
+                  i18n="Select all">Select all</mat-checkbox>
+              </div>
+              <mat-divider></mat-divider>
+              <div class="filter-checkbox-list">
+                @for (name of getUniqueSubscriptionNames(); track name) {
+                  <mat-checkbox [checked]="pendingFilters.subscriptions?.includes(name)"
+                    (change)="toggleArrayFilterItem('subscriptions', name)">
+                    {{name}}
+                  </mat-checkbox>
+                }
+              </div>
+              <div class="filter-menu-actions">
+                <button mat-button (click)="clearPendingFilter('sub_name')" i18n="Clear">Clear</button>
+                <button mat-flat-button color="primary" (click)="applyFilters()" i18n="Apply">Apply</button>
+              </div>
+            </div>
+          }
+        </mat-header-cell>
         <mat-cell *matCellDef="let element">
           @if (element.sub_name) {
             {{element.sub_name}}
@@ -33,7 +116,35 @@
 
       <!-- Progress Column -->
       <ng-container matColumnDef="percent_complete">
-        <mat-header-cell *matHeaderCellDef mat-sort-header> <ng-container i18n="Progress">Progress</ng-container> </mat-header-cell>
+        <mat-header-cell *matHeaderCellDef>
+          <span mat-sort-header><ng-container i18n="Progress">Progress</ng-container></span>
+          <button class="filter-funnel-button" (click)="openFilterMenu('percent_complete'); $event.stopPropagation()">
+            <svg class="filter-funnel-icon" [class.active]="isFilterActive('percent_complete')" viewBox="0 0 24 24" width="18" height="18">
+              <path d="M3 4h18l-7 8.5V18l-4 2v-7.5L3 4z" [attr.fill]="isFilterActive('percent_complete') ? 'white' : 'none'" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          @if (filterMenuOpenFor === 'percent_complete') {
+            <div class="filter-menu" (click)="$event.stopPropagation()">
+              @for (group of progressStageOptions; track group.group ?? 'ungrouped') {
+                <div class="filter-stage-group">
+                  @if (group.group) {
+                    <div class="filter-stage-group-label">{{group.group}}</div>
+                  }
+                  @for (item of group.items; track item.key) {
+                    <mat-checkbox [checked]="pendingFilters.progressStages?.includes(item.key)"
+                      (change)="toggleArrayFilterItem('progressStages', item.key)">
+                      {{item.label}}
+                    </mat-checkbox>
+                  }
+                </div>
+              }
+              <div class="filter-menu-actions">
+                <button mat-button (click)="clearPendingFilter('percent_complete')" i18n="Clear">Clear</button>
+                <button mat-flat-button color="primary" (click)="applyFilters()" i18n="Apply">Apply</button>
+              </div>
+            </div>
+          }
+        </mat-header-cell>
         <mat-cell *matCellDef="let element">
           @if (!element.error && element.finished && hasPlaylistItemProgress(element)) {
             <button class="playlist-progress-button" mat-button (click)="showPlaylistProgress(element); $event.stopPropagation()">

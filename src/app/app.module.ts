@@ -30,6 +30,7 @@ import { MatSortModule } from '@angular/material/sort';
 import { MatTableModule } from '@angular/material/table';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { MatChipsModule } from '@angular/material/chips';
+import { MatDividerModule } from '@angular/material/divider';
 import { MatBadgeModule } from '@angular/material/badge';
 import { DragDropModule } from '@angular/cdk/drag-drop';
 import { ClipboardModule } from '@angular/cdk/clipboard';
@@ -196,6 +197,7 @@ registerLocaleData(es, 'es');
         MatDatepickerModule,
         MatChipsModule,
         MatBadgeModule,
+        MatDividerModule,
         DragDropModule,
         ClipboardModule,
         TextFieldModule,
