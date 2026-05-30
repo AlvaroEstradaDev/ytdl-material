@@ -596,7 +596,10 @@ function buildDuplicateKey(source_extractor = null, source_id = null, is_audio =
     const normalized_source_id = normalizeSourceValue(source_id);
     if (!normalized_source_id) return null;
 
-    const normalized_source_extractor = normalizeSourceValue(source_extractor) || 'unknown';
+    let normalized_source_extractor = normalizeSourceValue(source_extractor) || 'unknown';
+    if (normalized_source_extractor === 'youtube-music') {
+        normalized_source_extractor = 'youtube';
+    }
     return `${normalized_source_extractor}:${normalized_source_id}:${is_audio ? 'audio' : 'video'}`;
 }
 exports.buildDuplicateKey = buildDuplicateKey;
@@ -629,6 +632,26 @@ function extractYouTubeIDFromUrl(raw_url = '') {
     return null;
 }
 
+function extractYoutubeMusicIDFromUrl(raw_url = '') {
+    if (typeof raw_url !== 'string' || raw_url.trim() === '') return null;
+
+    try {
+        const parsed_url = new URL(raw_url);
+        const host = parsed_url.hostname.replace(/^www\./, '').toLowerCase();
+        if (host !== 'music.youtube.com') return null;
+
+        const watch_id = parsed_url.searchParams.get('v');
+        if (watch_id) return normalizeSourceValue(watch_id);
+
+        const list_id = parsed_url.searchParams.get('list');
+        if (list_id) return normalizeSourceValue(list_id);
+    } catch (e) {
+        return null;
+    }
+
+    return null;
+}
+
 function extractTwitchVideoIDFromUrl(raw_url = '') {
     if (typeof raw_url !== 'string' || raw_url.trim() === '') return null;
 
@@ -649,6 +672,16 @@ function extractTwitchVideoIDFromUrl(raw_url = '') {
 function extractSourceMetadataFromUrl(raw_url = '', type = 'video') {
     const normalized_url = typeof raw_url === 'string' ? raw_url.trim() : '';
     if (!normalized_url) return null;
+
+    const ytmusic_id = extractYoutubeMusicIDFromUrl(normalized_url);
+    if (ytmusic_id) {
+        const is_audio = type === 'audio';
+        return {
+            source_id: ytmusic_id,
+            source_extractor: 'youtube-music',
+            duplicate_key: buildDuplicateKey('youtube-music', ytmusic_id, is_audio)
+        };
+    }
 
     const youtube_id = extractYouTubeIDFromUrl(normalized_url);
     if (youtube_id) {
@@ -673,6 +706,7 @@ function extractSourceMetadataFromUrl(raw_url = '', type = 'video') {
     return null;
 }
 exports.extractSourceMetadataFromUrl = extractSourceMetadataFromUrl;
+exports.extractYoutubeMusicIDFromUrl = extractYoutubeMusicIDFromUrl;
 
 function extractSourceMetadataFromInfo(info_json = null, type = 'video') {
     if (!info_json || typeof info_json !== 'object') return null;
