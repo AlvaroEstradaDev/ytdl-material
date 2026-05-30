@@ -57,6 +57,9 @@ export class DownloadsComponent implements OnInit, OnDestroy {
   playlist_progress_dialog_ref: MatDialogRef<PlaylistDownloadProgressDialogComponent> = null;
   playlist_progress_dialog_key: string = null;
   COMPLETE_LABEL = $localize`Complete`;
+  activeFilters: DownloadFilters = {};
+  pendingFilters: DownloadFilters = {};
+  filterMenuOpenFor: string | null = null;
 
   // The purpose of this is to reduce code reuse for displaying these actions as icons or in a menu
   downloadActions: DownloadAction[] = [
@@ -765,6 +768,26 @@ export class DownloadsComponent implements OnInit, OnDestroy {
     if (this.innerWidth < 800 && !this.uids || this.innerWidth < 1100 && this.uids) this.minimizeButtons = true;
     else                                                                            this.minimizeButtons = false;
   }
+
+  deriveStage(download: Download): string {
+    if (download.cancelled) return 'cancelled';
+    if (download.paused) return 'paused';
+    if (download.finished && download.error) return 'errored';
+    if (download.finished) return 'complete';
+    if (download.step_index === 0) return 'active-creating';
+    if (download.step_index === 1) return 'active-getting-info';
+    return 'active-downloading';
+  }
+
+  isFilterActive(column: string): boolean {
+    switch (column) {
+      case 'title': return !!this.activeFilters.titleRegex;
+      case 'timestamp_start': return !!this.activeFilters.dateRange?.preset || !!this.activeFilters.dateRange?.from || !!this.activeFilters.dateRange?.to;
+      case 'sub_name': return !!this.activeFilters.subscriptions?.length;
+      case 'percent_complete': return !!this.activeFilters.progressStages?.length;
+      default: return false;
+    }
+  }
 }
 
 interface DownloadAction {
@@ -813,3 +836,32 @@ interface BatchAggregateDownload extends DownloadWithContainer {
   playlist_batch_id?: string,
   batch_download_uids?: string[]
 }
+
+interface DownloadFilters {
+  titleRegex?: string;
+  progressStages?: string[];
+  dateRange?: { from?: Date; to?: Date; preset?: string };
+  subscriptions?: string[];
+}
+
+const PROGRESS_STAGE_OPTIONS = [
+  { group: $localize`Active`, items: [
+    { key: 'active-creating', label: $localize`Creating download` },
+    { key: 'active-getting-info', label: $localize`Getting info` },
+    { key: 'active-downloading', label: $localize`Downloading file` },
+  ]},
+  { group: null, items: [
+    { key: 'paused', label: $localize`Paused` },
+    { key: 'complete', label: $localize`Complete` },
+    { key: 'errored', label: $localize`Errored` },
+    { key: 'cancelled', label: $localize`Cancelled` },
+  ]},
+];
+
+const DATE_PRESET_OPTIONS = [
+  { key: 'today', label: $localize`Today` },
+  { key: 'last7', label: $localize`Last 7 days` },
+  { key: 'last30', label: $localize`Last 30 days` },
+  { key: 'thisMonth', label: $localize`This month` },
+  { key: 'allTime', label: $localize`All time` },
+];
