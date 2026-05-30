@@ -167,4 +167,15 @@ export class EditSubscriptionDialogComponent implements OnInit {
     return JSON.stringify(this.new_sub) !== JSON.stringify(this.sub);
   }
 
+  isYoutubeMusicUrl(url: string): boolean {
+    if (!url || typeof url !== 'string') return false;
+    try {
+      const parsedUrl = new URL(url);
+      const host = parsedUrl.hostname.replace(/^www\./, '').toLowerCase();
+      return host === 'music.youtube.com';
+    } catch (e) {
+      return false;
+    }
+  }
+
 }

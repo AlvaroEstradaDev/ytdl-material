@@ -104,6 +104,23 @@ export class SubscribeDialogComponent implements OnInit {
     }
   }
 
+  isYoutubeMusicUrl(url: string): boolean {
+    if (!url || typeof url !== 'string') return false;
+    try {
+      const parsedUrl = new URL(url);
+      const host = parsedUrl.hostname.replace(/^www\./, '').toLowerCase();
+      return host === 'music.youtube.com';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  onUrlChange() {
+    if (this.isYoutubeMusicUrl(this.url)) {
+      this.audioOnlyMode = true;
+    }
+  }
+
   // modify custom args
   openArgsModifierDialog() {
     const dialogRef = this.dialog.open(ArgModifierDialogComponent, {

@@ -1,5 +1,7 @@
 <h4 mat-dialog-title><ng-container i18n="Edit subscription dialog title prefix">Editing</ng-container>&nbsp;{{sub.name}}&nbsp;@if (sub.paused) {
 <ng-container i18n="Paused suffix">(Paused)</ng-container>
+}@if (isYoutubeMusicUrl(sub.url)) {
+  <span style="color: #ff0000; font-weight: 500; font-size: 0.85em; margin-left: 8px;">YouTube Music</span>
 }</h4>
 
 <mat-dialog-content>

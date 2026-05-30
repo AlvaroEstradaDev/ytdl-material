@@ -402,6 +402,21 @@ export class MainComponent implements OnInit {
 
     this.urlError = false;
 
+    const isYoutubeMusicUrl = () => {
+      if (!this.url) return false;
+      try {
+        const parsedUrl = new URL(this.url);
+        const host = parsedUrl.hostname.replace(/^www\./, '').toLowerCase();
+        return host === 'music.youtube.com';
+      } catch (e) {
+        return false;
+      }
+    };
+
+    if (isYoutubeMusicUrl() && !this.audioOnly) {
+      this.audioOnly = true;
+    }
+
     // get common args
     const customArgs = (this.customArgsEnabled && this.replaceArgs ? this.customArgs : null);
     const additionalArgs = (this.customArgsEnabled && !this.replaceArgs ? this.customArgs : null);

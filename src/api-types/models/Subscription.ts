@@ -12,6 +12,7 @@ export type Subscription = {
     type: FileType;
     user_uid: string | null;
     isPlaylist: boolean;
+    source?: 'youtube' | 'youtube-music' | 'twitch' | null;
     child_process?: any;
     archive?: string;
     timerange?: string;

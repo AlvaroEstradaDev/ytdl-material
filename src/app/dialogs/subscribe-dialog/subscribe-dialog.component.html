@@ -6,8 +6,14 @@
       <div class="col-12 mb-3">
         <mat-form-field color="accent">
           <mat-label i18n="URL">URL</mat-label>
-          <input [(ngModel)]="url" matInput required aria-required="true">
-          <mat-hint><ng-container i18n="Subscription URL input hint">The playlist or channel URL</ng-container></mat-hint>
+          <input [(ngModel)]="url" (ngModelChange)="onUrlChange()" matInput required aria-required="true">
+          <mat-hint>
+            @if (isYoutubeMusicUrl(url)) {
+              <ng-container i18n="YouTube Music URL hint">YouTube Music detected — audio-only mode with metadata and cover art</ng-container>
+            } @else {
+              <ng-container i18n="Subscription URL input hint">The playlist or channel URL</ng-container>
+            }
+          </mat-hint>
         </mat-form-field>
       </div>
     </div>
