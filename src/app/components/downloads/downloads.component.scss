@@ -44,3 +44,93 @@ mat-header-cell, mat-cell {
 .rounded {
     border-radius: 16px 16px 16px 16px !important;
 }
+
+mat-header-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    position: relative;
+}
+
+.filter-funnel-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px;
+    height: 20px;
+    width: 20px;
+}
+
+.filter-funnel-icon {
+    color: currentColor;
+    transition: fill 0.15s;
+}
+
+.filter-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 100;
+    background: var(--mat-menu-container-color, white);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    min-width: 220px;
+    max-height: 400px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.filter-menu-content {
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.filter-menu-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 16px;
+    border-top: 1px solid rgba(0,0,0,0.12);
+}
+
+.filter-checkbox-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.filter-select-all {
+    margin-bottom: 4px;
+}
+
+.filter-stage-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.filter-stage-group-label {
+    font-weight: 500;
+    font-size: 0.85em;
+    opacity: 0.7;
+    margin-top: 4px;
+    margin-bottom: 2px;
+}
+
+.filter-date-field {
+    width: 100%;
+    font-size: 0.9em;
+}
+
+.filter-regex-field {
+    width: 100%;
+}
