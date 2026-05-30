@@ -890,6 +890,10 @@ export class DownloadsComponent implements OnInit, OnDestroy {
   get datePresetOptions() { return DATE_PRESET_OPTIONS; }
   get progressStageOptions() { return PROGRESS_STAGE_OPTIONS; }
 
+  timestampToDate(ts: number | undefined): Date | null {
+    return ts != null ? new Date(ts) : null;
+  }
+
   setDateRangeFrom(date: Date | null): void {
     if (!this.pendingFilters.dateRange) this.pendingFilters.dateRange = {};
     this.pendingFilters.dateRange.from = date ? date.getTime() : undefined;

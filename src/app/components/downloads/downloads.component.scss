@@ -2,6 +2,16 @@ mat-header-cell, mat-cell {
     justify-content: center;
 }
 
+mat-header-cell {
+    overflow: visible !important;
+}
+
+mat-header-row {
+    overflow: visible !important;
+    z-index: 10;
+    position: relative;
+}
+
 .one-line {
     white-space: nowrap;
     overflow: hidden;
@@ -63,6 +73,7 @@ mat-header-cell {
     padding: 2px;
     height: 20px;
     width: 20px;
+    color: inherit;
 }
 
 .filter-funnel-icon {
