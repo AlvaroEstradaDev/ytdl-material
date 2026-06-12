@@ -14,6 +14,14 @@ const fs = require('fs-extra');
 const path = require('path');
 const scheduler = require('node-schedule');
 
+const DEFAULT_SUBSCRIPTIONS_CHECK_SCHEDULE = {
+    type: 'recurring',
+    data: {
+        hour: 0,
+        minute: 0
+    }
+};
+
 const TASKS = {
     backup_local_db: {
         run: db_api.backupDB,
@@ -50,9 +58,15 @@ const TASKS = {
     rebuild_database: {
         run: rebuildDB,
         title: 'Rebuild database'
+    },
+    subscriptions_check: {
+        run: checkSubscriptions,
+        title: 'Check subscriptions',
+        defaultSchedule: () => JSON.parse(JSON.stringify(DEFAULT_SUBSCRIPTIONS_CHECK_SCHEDULE))
     }
 }
 const TASK_JOBS = new Map();
+let setup_tasks_promise = null;
 
 // Backwards-compatible job access for tests/callers while storing jobs in a Map.
 function ensureTaskJobAccessor(taskKey) {
@@ -81,6 +95,27 @@ function ensureTaskJobAccessor(taskKey) {
 }
 for (const taskKey of Object.keys(TASKS)) {
     ensureTaskJobAccessor(taskKey);
+}
+
+function getDefaultTaskSchedule(task_key) {
+    const default_schedule = TASKS[task_key] && TASKS[task_key]['defaultSchedule'];
+    if (!default_schedule) return null;
+    const schedule = typeof default_schedule === 'function' ? default_schedule() : default_schedule;
+    return schedule ? JSON.parse(JSON.stringify(schedule)) : null;
+}
+
+function cancelTaskJob(task_key) {
+    const existing_job = TASK_JOBS.get(task_key);
+    if (existing_job) existing_job.cancel();
+    TASK_JOBS.delete(task_key);
+}
+
+function scheduleTaskJob(task_key, schedule) {
+    cancelTaskJob(task_key);
+    if (!schedule) return null;
+    const job = scheduleJob(task_key, schedule);
+    if (job) TASK_JOBS.set(task_key, job);
+    return job;
 }
 
 const defaultOptions = {
@@ -123,15 +158,17 @@ function scheduleJob(task_key, schedule) {
     });
 }
 
-if (db_api.database_initialized) {
-    exports.setupTasks();
-} else {
-    db_api.database_initialized_bs.subscribe(init => {
-        if (init) exports.setupTasks();
-    });
+exports.setupTasks = async () => {
+    if (setup_tasks_promise) return await setup_tasks_promise;
+    setup_tasks_promise = setupTasks();
+    try {
+        return await setup_tasks_promise;
+    } finally {
+        setup_tasks_promise = null;
+    }
 }
 
-exports.setupTasks = async () => {
+async function setupTasks() {
     const tasks_keys = Object.keys(TASKS);
     for (let i = 0; i < tasks_keys.length; i++) {
         const task_key = tasks_keys[i];
@@ -139,6 +176,7 @@ exports.setupTasks = async () => {
         const mergedDefaultOptions = Object.assign({}, defaultOptions['all'], defaultOptions[task_key] || {});
         const task_in_db = await db_api.getRecord('tasks', {key: task_key});
         if (!task_in_db) {
+            const default_schedule = getDefaultTaskSchedule(task_key);
             // insert task metadata into table if missing, eventually move title to UI
             await db_api.insertRecordIntoTable('tasks', {
                 key: task_key,
@@ -149,9 +187,10 @@ exports.setupTasks = async () => {
                 confirming: false,
                 data: null,
                 error: null,
-                schedule: null,
-                options: Object.assign({}, defaultOptions['all'], defaultOptions[task_key] || {})
+                schedule: default_schedule,
+                options: mergedDefaultOptions
             });
+            if (default_schedule) scheduleTaskJob(task_key, default_schedule);
         } else {
             // verify all options exist in task
             for (const key of Object.keys(mergedDefaultOptions)) {
@@ -170,13 +209,24 @@ exports.setupTasks = async () => {
             if (task_in_db['schedule']) {
                 // prevent timestamp schedules from being set to the past
                 if (task_in_db['schedule']['type'] === 'timestamp' && task_in_db['schedule']['data']['timestamp'] < Date.now()) {
+                    cancelTaskJob(task_key);
                     await db_api.updateRecord('tasks', {key: task_key}, {schedule: null});
                     continue;
                 }
-                TASK_JOBS.set(task_key, scheduleJob(task_key, task_in_db['schedule']));
+                scheduleTaskJob(task_key, task_in_db['schedule']);
+            } else {
+                cancelTaskJob(task_key);
             }
         }
     }
+}
+
+if (db_api.database_initialized) {
+    exports.setupTasks();
+} else {
+    db_api.database_initialized_bs.subscribe(init => {
+        if (init) exports.setupTasks();
+    });
 }
 
 exports.executeTask = async (task_key) => {
@@ -189,6 +239,28 @@ exports.executeTask = async (task_key) => {
     if (!TASKS[task_key]['confirm']) return;
     await exports.executeConfirm(task_key);
     logger.verbose(`Finished executing ${task_key}`);
+}
+
+exports.executeRunOnStartup = async (task_key) => {
+    if (!TASKS[task_key]) {
+        logger.error(`Task ${task_key} does not exist!`);
+        return false;
+    }
+
+    await exports.setupTasks();
+    const task_state = await db_api.getRecord('tasks', {key: task_key});
+    if (!task_state || !task_state['schedule']) {
+        logger.verbose(`Skipping startup run for task ${task_key} as it is not scheduled.`);
+        return false;
+    }
+
+    if (task_state['running'] || task_state['confirming']) {
+        logger.verbose(`Skipping startup run for task ${task_key} as it is already in progress.`);
+        return false;
+    }
+
+    await exports.executeRun(task_key);
+    return true;
 }
 
 exports.executeRun = async (task_key) => {
@@ -230,14 +302,12 @@ exports.updateTaskSchedule = async (task_key, schedule) => {
     }
     ensureTaskJobAccessor(task_key);
     await db_api.updateRecord('tasks', {key: task_key}, {schedule: schedule});
-    const existingJob = TASK_JOBS.get(task_key);
-    if (existingJob) {
-        existingJob.cancel();
-        TASK_JOBS.delete(task_key);
-    }
-    if (schedule) {
-        TASK_JOBS.set(task_key, scheduleJob(task_key, schedule));
-    }
+    scheduleTaskJob(task_key, schedule);
+    return true;
+}
+
+async function checkSubscriptions() {
+    return await subscriptions_api.checkSubscriptions();
 }
 
 // missing files check

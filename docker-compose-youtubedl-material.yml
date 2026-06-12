@@ -4,12 +4,14 @@ services:
     container_name: ytdl-material
     restart: always
     environment:
+      # MongoDB migration guide:
+      # https://github.com/voc0der/ytdl-material/wiki/Migrating-between-MongoDB-and-PostgreSQL
       ytdl_use_local_db: 'false'
-      ytdl_remote_db_type: 'postgres'
-      ytdl_postgresdb_connection_string: 'postgresql://PlaceholderUser:PlaceholderPassword@ytdl-postgres-db:5432/PlaceholderDB'
+      ytdl_remote_db_type: 'mongo'
+      ytdl_mongodb_connection_string: 'mongodb://ytdl-mongo-db:27017'
       write_ytdl_config: 'true'
     depends_on:
-      ytdl-postgres-db:
+      ytdl-mongo-db:
         condition: service_healthy
     ports:
       - "17442:17442"
@@ -20,16 +22,12 @@ services:
       - ./subscriptions:/app/subscriptions
       - ./users:/app/users
 
-  ytdl-postgres-db:
-    image: postgres:alpine
-    container_name: ytdl-postgres-db
+  ytdl-mongo-db:
+    image: mongo:4
+    container_name: ytdl-mongo-db
     restart: always
-    environment:
-      POSTGRES_PASSWORD: PlaceholderPassword
-      POSTGRES_DB: PlaceholderDB
-      POSTGRES_USER: PlaceholderUser
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U PlaceholderUser -d PlaceholderDB"]
+      test: ["CMD-SHELL", "mongo --eval 'db.runCommand({ping:1}).ok' --quiet"]
       interval: 15s
       timeout: 30s
       retries: 5
@@ -38,4 +36,4 @@ services:
     logging:
       driver: "none"
     volumes:
-      - ./db:/var/lib/postgresql
+      - ./db:/data/db

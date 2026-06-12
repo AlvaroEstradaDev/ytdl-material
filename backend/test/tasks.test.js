@@ -1,5 +1,5 @@
 /* eslint-disable no-undef */
-const { assert, fs, db_api, utils, generateEmptyVideoFile } = require('./test-shared');
+const { assert, fs, db_api, utils, subscriptions_api, generateEmptyVideoFile } = require('./test-shared');
 
 describe('Tasks', function() {
     const tasks_api = require('../tasks');
@@ -24,6 +24,79 @@ describe('Tasks', function() {
         const backups_new = await utils.recFindByExt('appdata', 'bak');
         const new_length = backups_new.length;
         assert(original_length === new_length-1);
+    });
+
+    it('Creates the subscription check task with a daily default schedule', async function() {
+        const task = await db_api.getRecord('tasks', {key: 'subscriptions_check'});
+
+        assert(task);
+        assert.strictEqual(task['title'], 'Check subscriptions');
+        assert.strictEqual(task['schedule']['type'], 'recurring');
+        assert.strictEqual(task['schedule']['data']['hour'], 0);
+        assert.strictEqual(task['schedule']['data']['minute'], 0);
+        assert(!!tasks_api.TASKS['subscriptions_check']['job']);
+    });
+
+    it('Runs subscription checks from the task manager', async function() {
+        const original_check_subscriptions = subscriptions_api.checkSubscriptions;
+        let check_subscriptions_called = false;
+
+        subscriptions_api.checkSubscriptions = async () => {
+            check_subscriptions_called = true;
+            return {success: true, checked: true, checked_count: 1, sub_ids: ['test-subscription']};
+        };
+
+        try {
+            await tasks_api.executeRun('subscriptions_check');
+            const task = await db_api.getRecord('tasks', {key: 'subscriptions_check'});
+
+            assert(check_subscriptions_called);
+            assert(task['last_ran']);
+            assert.strictEqual(task['running'], false);
+        } finally {
+            subscriptions_api.checkSubscriptions = original_check_subscriptions;
+        }
+    });
+
+    it('Runs the scheduled subscription check task on startup', async function() {
+        const original_check_subscriptions = subscriptions_api.checkSubscriptions;
+        let check_subscriptions_called = false;
+
+        subscriptions_api.checkSubscriptions = async () => {
+            check_subscriptions_called = true;
+            return {success: true, checked: true, checked_count: 1, sub_ids: ['startup-subscription']};
+        };
+
+        try {
+            const success = await tasks_api.executeRunOnStartup('subscriptions_check');
+            const task = await db_api.getRecord('tasks', {key: 'subscriptions_check'});
+
+            assert.strictEqual(success, true);
+            assert(check_subscriptions_called);
+            assert(task['last_ran']);
+        } finally {
+            subscriptions_api.checkSubscriptions = original_check_subscriptions;
+        }
+    });
+
+    it('Skips the startup subscription check when the task is not scheduled', async function() {
+        const original_check_subscriptions = subscriptions_api.checkSubscriptions;
+        let check_subscriptions_called = false;
+
+        subscriptions_api.checkSubscriptions = async () => {
+            check_subscriptions_called = true;
+            return {success: true};
+        };
+
+        try {
+            await tasks_api.updateTaskSchedule('subscriptions_check', null);
+            const success = await tasks_api.executeRunOnStartup('subscriptions_check');
+
+            assert.strictEqual(success, false);
+            assert.strictEqual(check_subscriptions_called, false);
+        } finally {
+            subscriptions_api.checkSubscriptions = original_check_subscriptions;
+        }
     });
 
     it('Check for missing files', async function() {
@@ -112,4 +185,3 @@ describe('Tasks', function() {
         assert(dummy_task_obj['data']);
     });
 });
-
