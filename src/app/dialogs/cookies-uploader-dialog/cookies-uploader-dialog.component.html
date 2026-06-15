@@ -3,7 +3,7 @@
 <mat-dialog-content>
   <div>
     <div class="center">
-      <ngx-file-drop [multiple]="false" accept=".txt" dropZoneLabel="Drop files here" (onFileDrop)="dropped($event)"
+      <ngx-file-drop [multiple]="false" accept=".txt,.json" dropZoneLabel="Drop files here" (onFileDrop)="dropped($event)"
         (onFileOver)="fileOver($event)" (onFileLeave)="fileLeave($event)">
         <ng-template ngx-file-drop-content-tmp let-openFileSelector="openFileSelector">
           <div>
