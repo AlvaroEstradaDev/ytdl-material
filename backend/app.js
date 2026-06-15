@@ -24,6 +24,7 @@ const CONSTS = require('./consts')
 const read_last_lines = require('read-last-lines');
 const ps = require('ps-node');
 const mime = require('mime-types');
+const cookieConverter = require('./cookie-converter');
 
 const logger = require('./logger');
 const config_api = require('./config.js');
@@ -2274,11 +2275,49 @@ app.post('/api/uploadCookies', upload_multer.single('cookies'), async (req, res)
         return;
     }
 
-    if (await fs.pathExists(resolvedUploadedPath)) {
-        await fs.rename(resolvedUploadedPath, new_path);
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+
+    if (ext === '.json') {
+        try {
+            const raw = await fs.readFile(resolvedUploadedPath, 'utf8');
+            let jsonArray;
+            try {
+                jsonArray = JSON.parse(raw);
+            } catch (e) {
+                await fs.remove(resolvedUploadedPath);
+                res.status(400).json({ error: 'File is not valid JSON.' });
+                return;
+            }
+            if (!Array.isArray(jsonArray)) {
+                await fs.remove(resolvedUploadedPath);
+                res.status(400).json({ error: 'Cookie file must be a JSON array.' });
+                return;
+            }
+            let netscape;
+            try {
+                netscape = cookieConverter.convertToNetscape(jsonArray);
+            } catch (e) {
+                await fs.remove(resolvedUploadedPath);
+                res.status(400).json({ error: e.message });
+                return;
+            }
+            await fs.writeFile(new_path, netscape, 'utf8');
+            await fs.remove(resolvedUploadedPath);
+        } catch (e) {
+            logger.error('Error converting cookie JSON: ' + e.message);
+            if (await fs.pathExists(resolvedUploadedPath)) {
+                await fs.remove(resolvedUploadedPath);
+            }
+            res.sendStatus(500);
+            return;
+        }
     } else {
-        res.sendStatus(500);
-        return;
+        if (await fs.pathExists(resolvedUploadedPath)) {
+            await fs.rename(resolvedUploadedPath, new_path);
+        } else {
+            res.sendStatus(500);
+            return;
+        }
     }
 
     if (await fs.pathExists(new_path)) {
