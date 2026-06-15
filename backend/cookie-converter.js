@@ -72,9 +72,6 @@ function toNetscapeLine(normalized) {
 }
 
 function convertToNetscape(jsonArray) {
-    if (!Array.isArray(jsonArray) || jsonArray.length === 0) {
-        throw new Error('No cookies found in file.');
-    }
     const format = detectFormat(jsonArray);
     const normalizers = {
         [FORMATS.EDIT_THIS_COOKIE]: normalizeEditThisCookie,
@@ -84,13 +81,7 @@ function convertToNetscape(jsonArray) {
     const normalize = normalizers[format];
     const lines = [];
     for (const entry of jsonArray) {
-        try {
-            lines.push(toNetscapeLine(normalize(entry)));
-        } catch (_) {
-        }
-    }
-    if (lines.length === 0) {
-        throw new Error('No valid cookies found after conversion.');
+        lines.push(toNetscapeLine(normalize(entry)));
     }
     return lines.join('\n') + '\n';
 }

@@ -39,11 +39,7 @@ describe('Cookie Converter', function() {
 
     describe('Cookie Quick Manager Conversion', function() {
         it('converts Cookie Quick Manager example file to valid Netscape', function() {
-            const jsonPath = path.resolve(__dirname, '../../cookies.json');
-            if (!fs.existsSync(jsonPath)) {
-                this.skip('cookies.json not found in repo root');
-                return;
-            }
+            const jsonPath = path.resolve(__dirname, './fixtures/cookies-cqm.json');
             const jsonArray = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
             const result = convertToNetscape(jsonArray);
             const lines = result.trim().split('\n');
@@ -52,7 +48,7 @@ describe('Cookie Converter', function() {
             const firstLine = lines[0];
             const cols = firstLine.split('\t');
             assert.strictEqual(cols.length, 7, 'each line must have 7 tab-separated columns');
-            assert.ok(cols[0].includes('youtube.com'), 'domain should contain youtube.com');
+            assert.ok(cols[0].includes('example.com'), 'domain should contain example.com');
             assert.ok(['TRUE', 'FALSE'].includes(cols[1]), 'subdomain flag must be TRUE or FALSE');
             assert.strictEqual(cols[2], '/', 'path should be /');
             assert.ok(['TRUE', 'FALSE'].includes(cols[3]), 'secure flag must be TRUE or FALSE');
@@ -229,25 +225,14 @@ describe('Cookie Converter', function() {
             assert.throws(() => convertToNetscape([]), /No cookies found/);
         });
 
-        it('produces output matching Netscape format against cookies.txt example', function() {
-            const jsonPath = path.resolve(__dirname, '../../cookies.json');
-            const txtPath = path.resolve(__dirname, '../../cookies.txt');
-            if (!fs.existsSync(jsonPath) || !fs.existsSync(txtPath)) {
-                this.skip('cookies.json or cookies.txt not found in repo root');
-                return;
-            }
+        it('produces output matching Netscape format against fixture', function() {
+            const jsonPath = path.resolve(__dirname, 'fixtures/cookies-cqm.json');
+            const txtPath = path.resolve(__dirname, 'fixtures/cookies-cqm.txt');
             const jsonArray = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
             const result = convertToNetscape(jsonArray);
-            const resultLines = result.trim().split('\n');
-
-            // Every line must have exactly 7 tab-separated columns
-            for (const line of resultLines) {
-                const cols = line.split('\t');
-                assert.strictEqual(cols.length, 7, `Expected 7 columns, got ${cols.length}: ${line.substring(0, 80)}`);
-            }
-
-            // Should produce same number of cookies as JSON entries
-            assert.strictEqual(resultLines.length, jsonArray.length, 'output line count should match input cookie count');
+            const expected = fs.readFileSync(txtPath, 'utf8').replace(/\r?\n$/, '');
+            const actual = result.replace(/\r?\n$/, '');
+            assert.strictEqual(actual, expected, 'converted output should match fixture exactly');
         });
     });
 });

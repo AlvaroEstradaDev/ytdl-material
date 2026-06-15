@@ -1,0 +1,2 @@
+.example.com	TRUE	/	TRUE	1735689600	session_id	fake_value_1
+.example.com	FALSE	/	FALSE	0	prefs	fake_value_2

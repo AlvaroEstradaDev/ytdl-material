@@ -1,0 +1,28 @@
+[
+    {
+        "Host raw": "https://.example.com/",
+        "Name raw": "session_id",
+        "Path raw": "/",
+        "Content raw": "fake_value_1",
+        "Expires raw": 1735689600,
+        "Send for raw": true,
+        "HTTP only raw": "true",
+        "SameSite raw": "no_restriction",
+        "This domain only raw": false,
+        "Store raw": "firefox-default",
+        "First Party Domain": ""
+    },
+    {
+        "Host raw": "http://.example.com/",
+        "Name raw": "prefs",
+        "Path raw": "/",
+        "Content raw": "fake_value_2",
+        "Expires raw": 0,
+        "Send for raw": false,
+        "HTTP only raw": "false",
+        "SameSite raw": "unspecified",
+        "This domain only raw": true,
+        "Store raw": "firefox-default",
+        "First Party Domain": ""
+    }
+]
