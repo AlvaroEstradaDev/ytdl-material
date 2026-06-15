@@ -58,10 +58,20 @@ function asFiniteNumber(value, defaultValue = 0) {
     return Number.isFinite(numeric_value) ? numeric_value : defaultValue;
 }
 
-function parseDelimitedArgs(args_string = '') {
+const GLUED_FLAG_PATTERN = /^--.*\s+--/;
+
+function parseDelimitedArgs(args_string = '', context = {}) {
     if (typeof args_string !== 'string' || args_string.trim() === '') return [];
-    return args_string.split(',,').map(arg => arg.trim()).filter(arg => arg !== '');
+    const sub_name = (context && context.sub_name) ? context.sub_name : 'unknown';
+    const parsed = args_string.split(',,').map(arg => arg.trim()).filter(arg => arg !== '');
+    for (const token of parsed) {
+        if (GLUED_FLAG_PATTERN.test(token)) {
+            logger.warn(`custom_args token may glue multiple flags: "${token}" (subscription: ${sub_name}). Use ',,' to separate argv entries.`);
+        }
+    }
+    return parsed;
 }
+exports.parseDelimitedArgs = parseDelimitedArgs;
 
 function getConfiguredPlaylistChunkSize() {
     return Math.max(1, asFiniteNumber(config_api.getConfigItem('ytdl_playlist_chunk_size'), DEFAULT_PLAYLIST_CHUNK_SIZE));
