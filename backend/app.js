@@ -885,8 +885,10 @@ function loadConfigValues() {
     if (!url || url === '') url = 'http://example.com'
     url_domain = new URL(url);
 
-    let logger_level = config_api.getConfigItem('ytdl_logger_level');
-    utils.updateLoggerLevel(logger_level);
+    const config_logger_level = logger.resolveConfigLoggerLevel(config_api.getConfigItem('ytdl_logger_level'));
+    if (config_logger_level !== null) {
+        utils.updateLoggerLevel(config_logger_level);
+    }
 
     configureExpressTrustProxy();
 }
