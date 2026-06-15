@@ -15,6 +15,10 @@ services:
       # ytdl_db_migrate: 'postgres'
       write_ytdl_config: 'true'
 
+      # Optional yt-dlp browser impersonation support.
+      # Set true to install and show it; otherwise normal yt-dlp behavior is unchanged.
+      # ytdl_enable_ytdlp_impersonation_dependencies: 'true'
+
       # Option 1: Let the container start as root, fix permissions, then drop privileges.
       # Default user/group IDs are 1000:1000.
       # ytdl_uid: 1000

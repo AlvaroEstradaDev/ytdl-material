@@ -1,5 +1,5 @@
 /* eslint-disable no-undef */
-const { assert, path, fs, youtubedl_api, CONSTS } = require('./test-shared');
+const { assert, path, fs, youtubedl_api, config_api, CONSTS } = require('./test-shared');
 
 describe('downloader info', function() {
     const fork = 'yt-dlp';
@@ -82,5 +82,41 @@ describe('downloader info', function() {
         assert.strictEqual(details.version, null);
         assert.strictEqual(details.binary_exists, false);
         assert.strictEqual(details.loaded, false);
+    });
+
+    it('uses the Python yt-dlp runtime only when impersonation env and setting are enabled', function() {
+        const original_impersonation = config_api.getConfigItem('ytdl_use_ytdlp_impersonation');
+        const original_dependency_env = process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+        const original_upper_dependency_env = process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES;
+
+        try {
+            delete process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+            delete process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES;
+
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', false);
+            assert.strictEqual(youtubedl_api.getYoutubeDLRuntimePath(fork), binary_path);
+
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', true);
+            assert.strictEqual(youtubedl_api.getYoutubeDLRuntimePath(fork), binary_path);
+
+            process.env.ytdl_enable_ytdlp_impersonation_dependencies = 'true';
+            assert.strictEqual(youtubedl_api.getYoutubeDLRuntimePath(fork), process.platform === 'win32' ? 'python' : 'python3');
+            assert.strictEqual(
+                youtubedl_api.getYoutubeDLRuntimePath('youtube-dl'),
+                path.join('appdata', 'bin', 'youtube-dl' + (process.platform === 'win32' ? '.exe' : ''))
+            );
+        } finally {
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', original_impersonation);
+            if (original_dependency_env === undefined) {
+                delete process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+            } else {
+                process.env.ytdl_enable_ytdlp_impersonation_dependencies = original_dependency_env;
+            }
+            if (original_upper_dependency_env === undefined) {
+                delete process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES;
+            } else {
+                process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES = original_upper_dependency_env;
+            }
+        }
     });
 });

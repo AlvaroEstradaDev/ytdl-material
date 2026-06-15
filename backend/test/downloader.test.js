@@ -245,6 +245,82 @@ describe('Downloader', function() {
         }
     });
 
+    it('Generate args appends yt-dlp browser impersonation when enabled', async function() {
+        const original_default_downloader = config_api.getConfigItem('ytdl_default_downloader');
+        const original_impersonation = config_api.getConfigItem('ytdl_use_ytdlp_impersonation');
+        const original_dependency_env = process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+
+        try {
+            process.env.ytdl_enable_ytdlp_impersonation_dependencies = 'true';
+            config_api.setConfigItem('ytdl_default_downloader', 'youtube-dl');
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', true);
+
+            const args = await downloader_api.generateArgs(url, 'video', {ui_uid: uuid()}, null, true);
+            assert(args.includes('--impersonate='));
+            assert.strictEqual(downloader_api.getPreferredDownloaderFork({}), 'yt-dlp');
+        } finally {
+            if (original_dependency_env === undefined) {
+                delete process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+            } else {
+                process.env.ytdl_enable_ytdlp_impersonation_dependencies = original_dependency_env;
+            }
+            config_api.setConfigItem('ytdl_default_downloader', original_default_downloader);
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', original_impersonation);
+        }
+    });
+
+    it('Generate args does not append yt-dlp browser impersonation without the env flag', async function() {
+        const original_impersonation = config_api.getConfigItem('ytdl_use_ytdlp_impersonation');
+        const original_dependency_env = process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+        const original_upper_dependency_env = process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES;
+
+        try {
+            delete process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+            delete process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES;
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', true);
+
+            const args = await downloader_api.generateArgs(url, 'video', {ui_uid: uuid()}, null, true);
+            assert(!args.includes('--impersonate='));
+        } finally {
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', original_impersonation);
+            if (original_dependency_env === undefined) {
+                delete process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+            } else {
+                process.env.ytdl_enable_ytdlp_impersonation_dependencies = original_dependency_env;
+            }
+            if (original_upper_dependency_env === undefined) {
+                delete process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES;
+            } else {
+                process.env.YTDL_ENABLE_YTDLP_IMPERSONATION_DEPENDENCIES = original_upper_dependency_env;
+            }
+        }
+    });
+
+    it('Generate args does not duplicate manually configured impersonation args', async function() {
+        const original_impersonation = config_api.getConfigItem('ytdl_use_ytdlp_impersonation');
+        const original_dependency_env = process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+
+        try {
+            process.env.ytdl_enable_ytdlp_impersonation_dependencies = 'true';
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', true);
+
+            const args = await downloader_api.generateArgs(url, 'video', {
+                customArgs: '--impersonate,,chrome',
+                ui_uid: uuid()
+            }, null, true);
+            const impersonate_args = args.filter(arg => arg === '--impersonate');
+            assert.strictEqual(impersonate_args.length, 1);
+            assert.strictEqual(args[args.indexOf('--impersonate') + 1], 'chrome');
+        } finally {
+            config_api.setConfigItem('ytdl_use_ytdlp_impersonation', original_impersonation);
+            if (original_dependency_env === undefined) {
+                delete process.env.ytdl_enable_ytdlp_impersonation_dependencies;
+            } else {
+                process.env.ytdl_enable_ytdlp_impersonation_dependencies = original_dependency_env;
+            }
+        }
+    });
+
     it('Download file', async function() {
         this.timeout(300000);
         await downloader_api.setupDownloads();
