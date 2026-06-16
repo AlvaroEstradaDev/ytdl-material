@@ -96,13 +96,23 @@ function getArchiveKey(extractor = null, id = null) {
     return `${normalized_extractor}:${normalized_id}`;
 }
 
-function parseDelimitedArgs(args_string = '') {
-    if (typeof args_string !== 'string' || args_string.trim() === '') return [];
-    return args_string.split(',,').map(arg => arg.trim()).filter(arg => arg !== '');
-}
+const GLUED_FLAG_PATTERN = /^--.*\s+--/;
 
-function applyCustomArgs(downloadConfig = [], args_string = '') {
-    const custom_args = parseDelimitedArgs(args_string);
+function parseDelimitedArgs(args_string = '', context = {}) {
+    if (typeof args_string !== 'string' || args_string.trim() === '') return [];
+    const sub_name = (context && context.sub_name) ? context.sub_name : 'unknown';
+    const parsed = args_string.split(',,').map(arg => arg.trim()).filter(arg => arg !== '');
+    for (const token of parsed) {
+        if (GLUED_FLAG_PATTERN.test(token)) {
+            logger.warn(`custom_args token may glue multiple flags: "${token}" (subscription: ${sub_name}). Use ',,' to separate argv entries.`);
+        }
+    }
+    return parsed;
+}
+exports.parseDelimitedArgs = parseDelimitedArgs;
+
+function applyCustomArgs(downloadConfig = [], args_string = '', context = {}) {
+    const custom_args = parseDelimitedArgs(args_string, context);
     if (custom_args.length === 0) return downloadConfig;
     return utils.injectArgs(downloadConfig, custom_args);
 }
@@ -984,8 +994,9 @@ async function getSubscriptionInfo(sub) {
     // get videos
     const downloader_fork = downloader_api.getPreferredDownloaderFork({});
     let downloadConfig = ['--dump-json'];
-    downloadConfig = applyCustomArgs(downloadConfig, config_api.getConfigItem('ytdl_custom_args'));
-    downloadConfig = applyCustomArgs(downloadConfig, sub.custom_args);
+    const sub_context = {sub_name: sub && sub.name ? sub.name : 'unknown'};
+    downloadConfig = applyCustomArgs(downloadConfig, config_api.getConfigItem('ytdl_custom_args'), sub_context);
+    downloadConfig = applyCustomArgs(downloadConfig, sub.custom_args, sub_context);
     downloadConfig = utils.injectArgs(downloadConfig, ['--playlist-end', '1']);
     downloadConfig = downloader_api.appendYtDlpImpersonationArgs(downloadConfig, downloader_fork);
     let useCookies = config_api.getConfigItem('ytdl_use_cookies');
@@ -1447,8 +1458,9 @@ async function generateArgsForSubscription(sub, user_uid, redownload = false, de
         downloadConfig.push('--download-archive', archive_path);
     }
 
-    downloadConfig = applyCustomArgs(downloadConfig, config_api.getConfigItem('ytdl_custom_args'));
-    downloadConfig = applyCustomArgs(downloadConfig, sub.custom_args);
+    const sub_context = {sub_name: sub && sub.name ? sub.name : 'unknown'};
+    downloadConfig = applyCustomArgs(downloadConfig, config_api.getConfigItem('ytdl_custom_args'), sub_context);
+    downloadConfig = applyCustomArgs(downloadConfig, sub.custom_args, sub_context);
 
     const default_downloader = downloader_api.getPreferredDownloaderFork({});
     downloadConfig = downloader_api.appendFilenameSanitizationArgs(downloadConfig, default_downloader);
