@@ -81,4 +81,14 @@ describe('DB pagination', function() {
         assert.strictEqual(res.offset, 0);
         assert.strictEqual(res.items.length, 10);
     });
+
+    it('treats null limit/offset as defaults (not 0/1)', async function() {
+        const res = await db_api.getPaginatedRecords('test',
+            { user_uid: 'u1' },
+            { by: 'timestamp', order: -1 },
+            { limit: null, offset: null });
+        assert.strictEqual(res.limit, 10);
+        assert.strictEqual(res.offset, 0);
+        assert.strictEqual(res.items.length, 10);
+    });
 });

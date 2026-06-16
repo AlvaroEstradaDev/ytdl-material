@@ -860,14 +860,27 @@ exports.getRecords = async (table, filter_obj = null, return_count = false, sort
     return await cursor.toArray();
 }
 
+/**
+ * Paginated read helper. Orchestrates two calls to getRecords (count + page slice)
+ * so it works across local_db, postgres, and mongo backends.
+ *
+ * @param {string} table - Table name.
+ * @param {object} filter_obj - Mongo-style filter (default {}).
+ * @param {{by: string, order: 1|-1}} sort - Sort spec, same shape as getRecords.
+ *     Callers SHOULD pass sort; pagination without sort yields non-deterministic
+ *     page ordering (duplicates/gaps across pages are possible).
+ * @param {{limit?: number, offset?: number}} pagination - limit clamped to [1,100]
+ *     (default 10); offset clamped to >=0 (default 0).
+ * @returns {Promise<{items: Array, total: number, limit: number, offset: number}>}
+ */
 exports.getPaginatedRecords = async (table, filter_obj = {}, sort = null, pagination = {}) => {
-    // Clamp limit/offset defensively. NaN/missing → defaults.
-    let limit = Number(pagination.limit);
-    let offset = Number(pagination.offset);
-    if (!Number.isFinite(limit)) limit = 10;
-    if (!Number.isFinite(offset)) offset = 0;
-    limit = Math.max(1, Math.min(100, Math.floor(limit)));
-    offset = Math.max(0, Math.floor(offset));
+    // Treat null/undefined as "use default"; coerce only finite numbers.
+    let limit = pagination.limit;
+    if (limit == null || !Number.isFinite(Number(limit))) limit = 10;
+    let offset = pagination.offset;
+    if (offset == null || !Number.isFinite(Number(offset))) offset = 0;
+    limit = Math.max(1, Math.min(100, Math.floor(Number(limit))));
+    offset = Math.max(0, Math.floor(Number(offset)));
 
     // Total count of records matching the filter (no range applied).
     // existing getRecords(table, filter, return_count=true) returns the filtered count.
