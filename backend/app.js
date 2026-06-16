@@ -3222,10 +3222,36 @@ app.post('/api/changeRolePermissions', optionalJwt, async (req, res) => {
 
 app.post('/api/getNotifications', optionalJwt, async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
+    const body = req.body || {};
 
-    const notifications = await db_api.getRecords('notifications', {user_uid: uuid});
+    // Clamp limit/offset defensively. db_api.getPaginatedRecords also clamps,
+    // but we do it here too so we echo the clamped values back to the client.
+    let limit = body.limit;
+    if (limit == null || !Number.isFinite(Number(limit))) limit = 10;
+    let offset = body.offset;
+    if (offset == null || !Number.isFinite(Number(offset))) offset = 0;
 
-    res.send({notifications: notifications});
+    const types = Array.isArray(body.types) ? body.types : [];
+    const unread_only = body.unread_only === true;
+
+    const query = { user_uid: uuid };
+    if (unread_only) query.read = false;
+    if (types.length > 0) query.type = { $in: types };
+
+    try {
+        const result = await db_api.getPaginatedRecords(
+            'notifications',
+            query,
+            { by: 'timestamp', order: -1 },
+            { limit, offset }
+        );
+        res.send(result);
+    } catch (err) {
+        // Log the real error, return a defined fallback shape so clients don't
+        // crash on a malformed response. Code-review guardrail (a): log + fallback.
+        logger.error(`getNotifications failed: ${err.message}`);
+        res.status(500).send({ items: [], total: 0, limit, offset });
+    }
 });
 
 // set notifications to read
