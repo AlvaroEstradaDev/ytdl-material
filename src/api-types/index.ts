@@ -57,8 +57,8 @@ export type { GetAllSubscriptionsResponse } from './models/GetAllSubscriptionsRe
 export type { GetAllTasksResponse } from './models/GetAllTasksResponse';
 export type { GetArchivesRequest } from './models/GetArchivesRequest';
 export type { GetArchivesResponse } from './models/GetArchivesResponse';
-export type { GetDBBackupsResponse } from './models/GetDBBackupsResponse';
 export type { GetCurrentDownloadsPaginatedRequest } from './models/GetCurrentDownloadsPaginatedRequest';
+export type { GetDBBackupsResponse } from './models/GetDBBackupsResponse';
 export type { GetDownloadRequest } from './models/GetDownloadRequest';
 export type { GetDownloadResponse } from './models/GetDownloadResponse';
 export type { GetFileFormatsRequest } from './models/GetFileFormatsRequest';
