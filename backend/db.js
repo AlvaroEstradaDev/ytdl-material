@@ -1647,49 +1647,86 @@ exports.bootstrapRemoteDBFromLocalIfNeeded = async () => {
           |            |
       filter_prop  filter_prop_value
 */
-exports.applyFilterLocalDB = (db_path, filter_obj, operation) => {
-    const filter_props = Object.keys(filter_obj);
-    const return_val = db_path[operation](record => {
-        if (!filter_props) return true;
-        let filtered = true;
-        for (let i = 0; i < filter_props.length; i++) {
-            const filter_prop = filter_props[i];
-            const filter_prop_value = filter_obj[filter_prop];
-            if (filter_prop_value === undefined || filter_prop_value === null) {
-                filtered &= record[filter_prop] === undefined || record[filter_prop] === null;
-            } else {
-                if (typeof filter_prop_value === 'object') {
-                    const record_value = filter_prop.includes('.')
-                        ? utils.searchObjectByString(record, filter_prop)
-                        : record[filter_prop];
-                    if ('$regex' in filter_prop_value) {
-                        filtered &= typeof record_value === 'string'
-                            && (record_value.search(new RegExp(filter_prop_value['$regex'], filter_prop_value['$options'])) !== -1);
-                    } else if ('$ne' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value !== filter_prop_value['$ne'];
-                    } else if ('$lt' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value < filter_prop_value['$lt'];
-                    } else if ('$gt' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value > filter_prop_value['$gt'];
-                    } else if ('$lte' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value <= filter_prop_value['$lte'];
-                    } else if ('$gte' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value >= filter_prop_value['$gte'];
-                    } else if ('$in' in filter_prop_value) {
-                        filtered &= Array.isArray(filter_prop_value['$in']) && filter_prop_value['$in'].includes(record_value);
-                    }
-                } else {
-                    // handle case of nested property check
-                    if (filter_prop.includes('.'))
-                        filtered &= utils.searchObjectByString(record, filter_prop) === filter_prop_value;
-                    else
-                        filtered &= record[filter_prop] === filter_prop_value;
+/*
+    Pure-JS per-record matcher used by applyFilterLocalDB. Extracted so that
+    top-level logical operators ($and, $or, $nor) can recurse cleanly. Emulates
+    Mongo's query semantics for the operator set used across the codebase:
+    $regex, $ne, $lt, $gt, $lte, $gte, $in, $nin, $not, plus the logical
+    $and/$or/$nor containers. Missing fields normalize per-op (matching Mongo's
+    "missing == null" rule for these operators).
+*/
+function recordMatchesLocalFilter(record, filter_obj) {
+    const filter_props = filter_obj ? Object.keys(filter_obj) : null;
+    if (!filter_props || filter_props.length === 0) return true;
+    let filtered = true;
+    for (let i = 0; i < filter_props.length; i++) {
+        const filter_prop = filter_props[i];
+        const filter_prop_value = filter_obj[filter_prop];
+
+        // Top-level logical operators (Mongo): each is an array of sub-predicates.
+        if (filter_prop === '$and') {
+            filtered &= Array.isArray(filter_prop_value)
+                && filter_prop_value.every(pred => recordMatchesLocalFilter(record, pred));
+            continue;
+        }
+        if (filter_prop === '$or') {
+            filtered &= Array.isArray(filter_prop_value)
+                && filter_prop_value.some(pred => recordMatchesLocalFilter(record, pred));
+            continue;
+        }
+        if (filter_prop === '$nor') {
+            filtered &= Array.isArray(filter_prop_value)
+                && !filter_prop_value.some(pred => recordMatchesLocalFilter(record, pred));
+            continue;
+        }
+
+        if (filter_prop_value === undefined || filter_prop_value === null) {
+            filtered &= record[filter_prop] === undefined || record[filter_prop] === null;
+        } else {
+            if (typeof filter_prop_value === 'object') {
+                const record_value = filter_prop.includes('.')
+                    ? utils.searchObjectByString(record, filter_prop)
+                    : record[filter_prop];
+                // Normalize missing → null for the equality-style operators so
+                // local_db matches Mongo: $ne/$in/$nin treat missing == null.
+                // Range operators ($lt/$gt/$lte/$gte) keep "missing never matches"
+                // semantics, which is also Mongo-correct.
+                const eq_value = record_value === undefined ? null : record_value;
+                if ('$regex' in filter_prop_value) {
+                    filtered &= typeof record_value === 'string'
+                        && (record_value.search(new RegExp(filter_prop_value['$regex'], filter_prop_value['$options'])) !== -1);
+                } else if ('$ne' in filter_prop_value) {
+                    filtered &= eq_value !== (filter_prop_value['$ne'] === undefined ? null : filter_prop_value['$ne']);
+                } else if ('$nin' in filter_prop_value) {
+                    filtered &= Array.isArray(filter_prop_value['$nin']) && !filter_prop_value['$nin'].includes(eq_value);
+                } else if ('$not' in filter_prop_value) {
+                    // Mongo $not: negate the inner operator expression on the same field.
+                    filtered &= !recordMatchesLocalFilter(record, {[filter_prop]: filter_prop_value['$not']});
+                } else if ('$lt' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value < filter_prop_value['$lt'];
+                } else if ('$gt' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value > filter_prop_value['$gt'];
+                } else if ('$lte' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value <= filter_prop_value['$lte'];
+                } else if ('$gte' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value >= filter_prop_value['$gte'];
+                } else if ('$in' in filter_prop_value) {
+                    filtered &= Array.isArray(filter_prop_value['$in']) && filter_prop_value['$in'].includes(eq_value);
                 }
+            } else {
+                // handle case of nested property check
+                if (filter_prop.includes('.'))
+                    filtered &= utils.searchObjectByString(record, filter_prop) === filter_prop_value;
+                else
+                    filtered &= record[filter_prop] === filter_prop_value;
             }
         }
-        return filtered;
-    });
-    return return_val;
+    }
+    return !!filtered;
+}
+
+exports.applyFilterLocalDB = (db_path, filter_obj, operation) => {
+    return db_path[operation](record => recordMatchesLocalFilter(record, filter_obj));
 }
 
 // should only be used for tests

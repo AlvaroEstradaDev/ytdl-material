@@ -37,6 +37,8 @@ const youtubedl_api = require('./youtube-dl');
 const archive_api = require('./archive');
 const files_api = require('./files');
 const notifications_api = require('./notifications');
+const downloads_filters = require('./utils/downloads-filters');
+const { buildDownloadQuery } = downloads_filters;
 
 var app = express();
 const CONFIG_ROOT_KEY = 'YtdlMaterial';
@@ -2726,21 +2728,68 @@ app.get('/api/thumbnail/:path', optionalJwt, async (req, res) => {
 
 app.post('/api/downloads', optionalJwt, async (req, res) => {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
-    const uids = req.body.uids;
-    const only_unfinished = req.body.only_unfinished === true;
-    const filter_obj = getScopedFilterByUser(user_uid);
-    if (Array.isArray(uids)) {
-        if (uids.length === 0) {
-            res.send({downloads: []});
-            return;
-        }
-        filter_obj['uid'] = {$in: uids};
-    } else if (only_unfinished) {
-        filter_obj['finished'] = false;
-    }
-    const downloads = await db_api.getRecords('download_queue', filter_obj);
+    const body = req.body || {};
+    const scoped_filter = getScopedFilterByUser(user_uid);
 
-    res.send({downloads: downloads});
+    // Legacy clients send { uids, only_unfinished } and expect { downloads: [...] }.
+    // Paginated clients send { limit, offset, filters } and expect
+    // { items, total, limit, offset }. Detect by presence of limit/offset.
+    const is_paginated = body.limit != null || body.offset != null;
+
+    try {
+        if (is_paginated) {
+            let limit = body.limit;
+            if (limit == null || !Number.isFinite(Number(limit))) limit = 10;
+            let offset = body.offset;
+            if (offset == null || !Number.isFinite(Number(offset))) offset = 0;
+
+            const filters = body.filters || {};
+            const query = buildDownloadQuery(scoped_filter, filters);
+
+            // Preserve legacy only_unfinished behavior even in paginated mode,
+            // so callers transitioning can keep using it alongside pagination.
+            if (body.only_unfinished === true) query.finished = false;
+            if (Array.isArray(body.uids)) {
+                if (body.uids.length === 0) {
+                    res.send({ items: [], total: 0, limit, offset });
+                    return;
+                }
+                query.uid = { $in: body.uids };
+            }
+
+            const result = await db_api.getPaginatedRecords(
+                'download_queue',
+                query,
+                { by: 'timestamp_start', order: -1 },
+                { limit, offset }
+            );
+            res.send(result);
+        } else {
+            // Legacy path: unbounded. Keep until all callers have migrated.
+            const uids = body.uids;
+            const only_unfinished = body.only_unfinished === true;
+            const filter_obj = { ...scoped_filter };
+            if (Array.isArray(uids)) {
+                if (uids.length === 0) {
+                    res.send({ downloads: [] });
+                    return;
+                }
+                filter_obj.uid = { $in: uids };
+            } else if (only_unfinished) {
+                filter_obj.finished = false;
+            }
+            const downloads = await db_api.getRecords('download_queue', filter_obj);
+            res.send({ downloads: downloads });
+        }
+    } catch (err) {
+        // Log + defined fallback shape per code-review guardrail (a).
+        logger.error(`/api/downloads failed: ${err.message}`);
+        if (is_paginated) {
+            res.status(500).send({ items: [], total: 0, limit: 10, offset: 0 });
+        } else {
+            res.status(500).send({ downloads: [] });
+        }
+    }
 });
 
 app.post('/api/download', optionalJwt, async (req, res) => {
