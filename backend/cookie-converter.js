@@ -15,11 +15,18 @@ function detectFormat(jsonArray) {
     throw new Error('Unsupported cookie format. Supported: EditThisCookie, Cookie Editor, Cookie Quick Manager, Puppeteer/Playwright');
 }
 
+const NETSCAPE_HEADER = '# Netscape HTTP Cookie File';
+
+function deriveIncludeSubdomains(domain) {
+    return (typeof domain === 'string' && domain.startsWith('.')) ? 'TRUE' : 'FALSE';
+}
+
 function normalizeEditThisCookie(entry) {
+    const domain = (entry.domain || '').trim();
     const isSession = entry.session === true || entry.expirationDate === undefined;
     return {
-        domain: (entry.domain || '').trim(),
-        includeSubdomains: entry.hostOnly ? 'FALSE' : 'TRUE',
+        domain,
+        includeSubdomains: deriveIncludeSubdomains(domain),
         path: entry.path || '/',
         secure: entry.secure ? 'TRUE' : 'FALSE',
         expiry: isSession ? '0' : String(Math.floor(entry.expirationDate || 0)),
@@ -32,14 +39,15 @@ function normalizeCookieQuickManager(entry) {
     const host = (entry['Host raw'] || '')
         .replace(/^https?:\/\//, '')
         .replace(/\/$/, '');
+    const domain = host;
     const expiryRaw = entry['Expires raw'];
     const isSession = expiryRaw === 0 || expiryRaw === '0';
     return {
-        domain: host,
-        includeSubdomains: entry['This domain only raw'] ? 'FALSE' : 'TRUE',
+        domain,
+        includeSubdomains: deriveIncludeSubdomains(domain),
         path: entry['Path raw'] || '/',
         secure: entry['Send for raw'] ? 'TRUE' : 'FALSE',
-        expiry: isSession ? '0' : String(expiryRaw || 0),
+        expiry: isSession ? '0' : String(Math.floor(Number(expiryRaw) || 0)),
         name: entry['Name raw'] || '',
         value: entry['Content raw'] || '',
     };
@@ -79,7 +87,7 @@ function convertToNetscape(jsonArray) {
         [FORMATS.CDP]: normalizeCDP,
     };
     const normalize = normalizers[format];
-    const lines = [];
+    const lines = [NETSCAPE_HEADER];
     for (const entry of jsonArray) {
         lines.push(toNetscapeLine(normalize(entry)));
     }
