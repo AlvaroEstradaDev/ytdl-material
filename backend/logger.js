@@ -50,4 +50,10 @@ if (invalidRawLogLevel) {
     logger.warn(`Invalid log level '${invalidRawLogLevel}' from environment. Falling back to 'info'.`);
 }
 
+function resolveConfigLoggerLevel(config_level) {
+    return normalizeLogLevel(config_level);
+}
+
+logger.resolveConfigLoggerLevel = resolveConfigLoggerLevel;
+
 module.exports = logger;
