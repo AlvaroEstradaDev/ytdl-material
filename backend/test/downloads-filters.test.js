@@ -8,35 +8,7 @@ const {
     buildDownloadQuery,
     STAGE_QUERIES
 } = require('../utils/downloads-filters');
-
-// In-JS predicate matcher sufficient for the field shapes used in STAGE_QUERIES
-// (literals, $ne, $gte, $in, $not, $nin).
-function matchesPredicate(doc, pred) {
-    for (const [key, cond] of Object.entries(pred)) {
-        const v = doc[key];
-        if (cond === null) {
-            if (v !== null && v !== undefined) return false;
-            continue;
-        }
-        if (typeof cond !== 'object') {
-            if (v !== cond) return false;
-            continue;
-        }
-        for (const [op, operand] of Object.entries(cond)) {
-            if (op === '$ne')        { if (v === operand) return false; }
-            else if (op === '$gte')  { if (!(v >= operand)) return false; }
-            else if (op === '$lte')  { if (!(v <= operand)) return false; }
-            else if (op === '$in')   { if (!operand.includes(v)) return false; }
-            else if (op === '$nin')  { if (operand.includes(v)) return false; }
-            else if (op === '$not')  {
-                // $not operand is itself a query doc; match if inner does NOT match
-                if (matchesPredicate(doc, { [key]: operand })) return false;
-            }
-            else throw new Error(`Unsupported op in test helper: ${op}`);
-        }
-    }
-    return true;
-}
+const { matchesPredicate } = require('./helpers/mongo-predicate');
 
 describe('downloads-filters', function() {
     describe('buildTitleFilter', function() {

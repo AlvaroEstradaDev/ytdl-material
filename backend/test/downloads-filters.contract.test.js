@@ -1,6 +1,7 @@
 /* eslint-disable no-undef */
 const assert = require('assert');
 const { STAGE_QUERIES } = require('../utils/downloads-filters');
+const { matchesPredicate } = require('./helpers/mongo-predicate');
 
 // Mirrors DownloadsComponent.deriveStage() exactly.
 // Source of truth: src/app/components/downloads/downloads.component.ts:804-812.
@@ -13,39 +14,6 @@ function deriveStage(download) {
     if (download.step_index === 0) return 'active-creating';
     if (download.step_index === 1) return 'active-getting-info';
     return 'active-downloading';
-}
-
-// Pure in-JS predicate matcher replicating how Mongo evaluates the query,
-// sufficient for the field shapes used in STAGE_QUERIES
-// (literals + $ne/$gte/$lte/$in/$nin/$not).
-function matchesPredicate(doc, pred) {
-    for (const [key, cond] of Object.entries(pred)) {
-        // Mongo treats a missing field as null for the operators used in
-        // STAGE_QUERIES ($in/$nin/$ne/$gte/$lte). Normalize undefined→null
-        // so the in-JS matcher mirrors real Mongo evaluation.
-        const v = doc[key] === undefined ? null : doc[key];
-        if (cond === null) {
-            if (v !== null && v !== undefined) return false;
-            continue;
-        }
-        if (typeof cond !== 'object') {
-            if (v !== cond) return false;
-            continue;
-        }
-        for (const [op, operand] of Object.entries(cond)) {
-            if (op === '$ne')        { if (v === operand) return false; }
-            else if (op === '$gte')  { if (!(v >= operand)) return false; }
-            else if (op === '$lte')  { if (!(v <= operand)) return false; }
-            else if (op === '$in')   { if (!operand.includes(v)) return false; }
-            else if (op === '$nin')  { if (operand.includes(v)) return false; }
-            else if (op === '$not')  {
-                // $not operand is itself a query doc; matches iff inner does NOT match
-                if (matchesPredicate(doc, { [key]: operand })) return false;
-            }
-            else throw new Error(`Unsupported op in contract test: ${op}`);
-        }
-    }
-    return true;
 }
 
 describe('progressStages drift contract', function() {
@@ -67,7 +35,8 @@ describe('progressStages drift contract', function() {
         { name: 'active-downloading (step null)',  doc: { finished: false, step_index: null } },
         { name: 'paused with step_index=2→paused', doc: { paused: true, step_index: 2 } },
         { name: 'cancelled with step_index=1→cancelled', doc: { cancelled: true, step_index: 1 } },
-        { name: 'errored+paused→paused',           doc: { paused: true, finished: true, error: 'x' } },
+        { name: 'paused+finished+error→paused',    doc: { paused: true, finished: true, error: 'x' } },
+        { name: 'cancelled+finished+error→cancelled', doc: { cancelled: true, finished: true, error: 'x' } },
     ];
 
     for (const { name, doc } of fixtures) {
@@ -85,4 +54,12 @@ describe('progressStages drift contract', function() {
             }
         });
     }
+
+    it('every stage has at least one fixture classifying to it', function() {
+        const hit = new Set(fixtures.map(f => deriveStage(f.doc)));
+        for (const stage of Object.keys(STAGE_QUERIES)) {
+            assert.ok(hit.has(stage),
+                `no fixture exercises stage "${stage}" — add one or remove the stage`);
+        }
+    });
 });
