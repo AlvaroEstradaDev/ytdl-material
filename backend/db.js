@@ -104,10 +104,7 @@ const tables = {
         name: 'downloads',
         field_types: {
             key: 'text'
-        },
-        indexes: [
-            { keys: { user_uid: 1, timestamp_start: -1 } }
-        ]
+        }
     },
     users: {
         name: 'users',
@@ -149,7 +146,8 @@ const tables = {
             { keys: { user_uid: 1, finished: 1, paused: 1 } },
             { keys: { sub_id: 1, error: 1, finished: 1 } },
             { keys: { sub_id: 1, url: 1, error: 1, finished: 1 } },
-            { keys: { running: 1, sub_id: 1 } }
+            { keys: { running: 1, sub_id: 1 } },
+            { keys: { user_uid: 1, timestamp_start: -1 } }
         ]
     },
     tasks: {

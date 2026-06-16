@@ -112,14 +112,30 @@ describe('downloads-filters', function() {
     });
 
     describe('buildDownloadQuery', function() {
-        it('returns just user_uid when no filters', function() {
-            assert.deepStrictEqual(buildDownloadQuery('u1', {}), { user_uid: 'u1' });
+        it('returns the base query unchanged when no filters', function() {
+            assert.deepStrictEqual(buildDownloadQuery({ user_uid: 'u1' }, {}), { user_uid: 'u1' });
         });
-        it('ANDs multiple filters', function() {
-            const q = buildDownloadQuery('u1', { titleRegex: 'foo', subscriptions: ['Daily'] });
+
+        it('returns empty base untouched (single-user mode)', function() {
+            assert.deepStrictEqual(buildDownloadQuery({}, {}), {});
+        });
+
+        it('ANDs multiple filters onto base', function() {
+            const q = buildDownloadQuery({ user_uid: 'u1' }, { titleRegex: 'foo', subscriptions: ['Daily'] });
             assert.strictEqual(q.user_uid, 'u1');
             assert.ok(q.$and);
             assert.strictEqual(q.$and.length, 2);
+        });
+
+        it('preserves arbitrary base fields (e.g. finished: false)', function() {
+            const q = buildDownloadQuery({ user_uid: 'u1', finished: false }, {});
+            assert.deepStrictEqual(q, { user_uid: 'u1', finished: false });
+        });
+
+        it('does not mutate the base query object', function() {
+            const base = { user_uid: 'u1' };
+            buildDownloadQuery(base, { titleRegex: 'foo' });
+            assert.deepStrictEqual(base, { user_uid: 'u1' }, 'base must not be mutated');
         });
     });
 });

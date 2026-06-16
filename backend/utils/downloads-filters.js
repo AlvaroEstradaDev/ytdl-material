@@ -63,8 +63,14 @@ function buildSubsFilter(subs) {
     return { sub_name: { $in: values } };
 }
 
-function buildDownloadQuery(user_uid, filters) {
-    const q = { user_uid };
+/**
+ * Compose a final Mongo query by merging a base (scope) filter with the
+ * user-supplied filter parts. Caller is responsible for the base — typically
+ * `getScopedFilterByUser(user_uid)` so single-user vs multi-user mode is
+ * respected at the endpoint layer.
+ */
+function buildDownloadQuery(baseQuery, filters) {
+    const q = { ...baseQuery };
     const parts = [
         buildTitleFilter(filters.titleRegex),
         buildStageFilter(filters.progressStages),
