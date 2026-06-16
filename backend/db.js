@@ -104,7 +104,10 @@ const tables = {
         name: 'downloads',
         field_types: {
             key: 'text'
-        }
+        },
+        indexes: [
+            { keys: { user_uid: 1, timestamp_start: -1 } }
+        ]
     },
     users: {
         name: 'users',
@@ -167,7 +170,8 @@ const tables = {
             'data.task_key': 'text'
         },
         indexes: [
-            { keys: { user_uid: 1 } }
+            { keys: { user_uid: 1 } },
+            { keys: { user_uid: 1, timestamp: -1 } }
         ]
     },
     archives: {
@@ -855,6 +859,26 @@ exports.getRecords = async (table, filter_obj = null, return_count = false, sort
 
     return await cursor.toArray();
 }
+
+exports.getPaginatedRecords = async (table, filter_obj = {}, sort = null, pagination = {}) => {
+    // Clamp limit/offset defensively. NaN/missing → defaults.
+    let limit = Number(pagination.limit);
+    let offset = Number(pagination.offset);
+    if (!Number.isFinite(limit)) limit = 10;
+    if (!Number.isFinite(offset)) offset = 0;
+    limit = Math.max(1, Math.min(100, Math.floor(limit)));
+    offset = Math.max(0, Math.floor(offset));
+
+    // Total count of records matching the filter (no range applied).
+    // existing getRecords(table, filter, return_count=true) returns the filtered count.
+    const total = await exports.getRecords(table, filter_obj, true);
+
+    // Page slice. Existing getRecords uses range = [start, end_exclusive]
+    // where end = offset + limit. See getRecords above for reference.
+    const items = await exports.getRecords(table, filter_obj, false, sort, [offset, offset + limit]);
+
+    return { items, total, limit, offset };
+};
 
 exports.aggregateRecords = async (table, pipeline = []) => {
     if (!tables[table]) {
