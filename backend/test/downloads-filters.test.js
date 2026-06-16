@@ -9,6 +9,35 @@ const {
     STAGE_QUERIES
 } = require('../utils/downloads-filters');
 
+// In-JS predicate matcher sufficient for the field shapes used in STAGE_QUERIES
+// (literals, $ne, $gte, $in, $not, $nin).
+function matchesPredicate(doc, pred) {
+    for (const [key, cond] of Object.entries(pred)) {
+        const v = doc[key];
+        if (cond === null) {
+            if (v !== null && v !== undefined) return false;
+            continue;
+        }
+        if (typeof cond !== 'object') {
+            if (v !== cond) return false;
+            continue;
+        }
+        for (const [op, operand] of Object.entries(cond)) {
+            if (op === '$ne')        { if (v === operand) return false; }
+            else if (op === '$gte')  { if (!(v >= operand)) return false; }
+            else if (op === '$lte')  { if (!(v <= operand)) return false; }
+            else if (op === '$in')   { if (!operand.includes(v)) return false; }
+            else if (op === '$nin')  { if (operand.includes(v)) return false; }
+            else if (op === '$not')  {
+                // $not operand is itself a query doc; match if inner does NOT match
+                if (matchesPredicate(doc, { [key]: operand })) return false;
+            }
+            else throw new Error(`Unsupported op in test helper: ${op}`);
+        }
+    }
+    return true;
+}
+
 describe('downloads-filters', function() {
     describe('buildTitleFilter', function() {
         it('returns null when regex is empty/undefined', function() {
@@ -39,6 +68,46 @@ describe('downloads-filters', function() {
         it('ignores unknown stage names', function() {
             const result = buildStageFilter(['errored', 'bogus']);
             assert.strictEqual(result.$or.length, 1);
+        });
+
+        it('active-downloading matches missing step_index', function() {
+            const result = buildStageFilter(['active-downloading']);
+            // Simulate Mongo's predicate evaluation in pure JS for verification
+            const stageQuery = result.$or[0];
+            // Missing step_index should match (client deriveStage falls through)
+            const missingStepDoc = { finished: false };
+            const matchesMissing = matchesPredicate(missingStepDoc, stageQuery);
+            assert.ok(matchesMissing, 'download with missing step_index should match active-downloading');
+
+            // step_index: 0 should NOT match (that's active-creating)
+            const step0Doc = { finished: false, step_index: 0 };
+            assert.ok(!matchesPredicate(step0Doc, stageQuery), 'step_index:0 must NOT match active-downloading');
+        });
+
+        it('errored and complete handle error="" like client truthiness', function() {
+            const erroredFilter = buildStageFilter(['errored']);
+            const completeFilter = buildStageFilter(['complete']);
+            // error: "" → client `if (download.finished && download.error)` treats "" as falsy → complete
+            const emptyErrorDoc = { finished: true, error: '' };
+            assert.ok(!matchesPredicate(emptyErrorDoc, erroredFilter.$or[0]),
+                'error:"" must NOT match errored (client truthiness)');
+            assert.ok(matchesPredicate(emptyErrorDoc, completeFilter.$or[0]),
+                'error:"" MUST match complete');
+        });
+
+        it('returns cloned predicates (no shared refs with STAGE_QUERIES)', function() {
+            const result = buildStageFilter(['errored']);
+            assert.notStrictEqual(result.$or[0], STAGE_QUERIES.errored,
+                'returned predicate must be a clone, not the original ref');
+            // Mutate the returned query; STAGE_QUERIES must be unaffected
+            result.$or[0].finished = 'tampered';
+            assert.strictEqual(STAGE_QUERIES.errored.finished, true,
+                'STAGE_QUERIES must not be mutated by caller changes');
+        });
+
+        it('deduplicates duplicate stage names', function() {
+            const result = buildStageFilter(['errored', 'errored', 'complete']);
+            assert.strictEqual(result.$or.length, 2);
         });
     });
 

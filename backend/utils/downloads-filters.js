@@ -8,11 +8,11 @@
 const STAGE_QUERIES = Object.freeze({
     cancelled:             { cancelled: true },
     paused:                { paused: true,  cancelled: { $ne: true } },
-    errored:               { finished: true,  error: { $ne: null }, cancelled: { $ne: true }, paused: { $ne: true } },
-    complete:              { finished: true,  error: null,           cancelled: { $ne: true }, paused: { $ne: true } },
+    errored:               { finished: true,  error: { $nin: [null, ''] }, cancelled: { $ne: true }, paused: { $ne: true } },
+    complete:              { finished: true,  error: { $in: [null, ''] },  cancelled: { $ne: true }, paused: { $ne: true } },
     'active-creating':     { finished: false, cancelled: { $ne: true }, paused: { $ne: true }, step_index: 0 },
     'active-getting-info': { finished: false, cancelled: { $ne: true }, paused: { $ne: true }, step_index: 1 },
-    'active-downloading':  { finished: false, cancelled: { $ne: true }, paused: { $ne: true }, step_index: { $gte: 2 } },
+    'active-downloading':  { finished: false, cancelled: { $ne: true }, paused: { $ne: true }, step_index: { $not: { $in: [0, 1] } } },
 });
 
 /**
@@ -35,9 +35,9 @@ function buildTitleFilter(regexStr) {
 
 function buildStageFilter(stages) {
     if (!Array.isArray(stages) || stages.length === 0) return null;
-    const selected = stages.map(s => STAGE_QUERIES[s]).filter(Boolean);
+    const selected = [...new Set(stages)].map(s => STAGE_QUERIES[s]).filter(Boolean);
     if (selected.length === 0) return null;
-    return { $or: selected };
+    return { $or: selected.map(q => ({ ...q })) };
 }
 
 /**
