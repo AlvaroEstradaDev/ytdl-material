@@ -45,8 +45,8 @@ describe('Cookie Converter', function() {
             const lines = result.trim().split('\n');
             assert.ok(lines.length > 0, 'should produce at least one line');
 
-            const firstLine = lines[0];
-            const cols = firstLine.split('\t');
+            const firstCookieLine = lines.find(l => l.includes('\t'));
+            const cols = firstCookieLine.split('\t');
             assert.strictEqual(cols.length, 7, 'each line must have 7 tab-separated columns');
             assert.ok(cols[0].includes('example.com'), 'domain should contain example.com');
             assert.ok(['TRUE', 'FALSE'].includes(cols[1]), 'subdomain flag must be TRUE or FALSE');
@@ -69,7 +69,7 @@ describe('Cookie Converter', function() {
                 'First Party Domain': ''
             }];
             const result = convertToNetscape(data);
-            const cols = result.trim().split('\t');
+            const cols = result.trim().split('\n').find(l => l.includes('\t')).split('\t');
             assert.strictEqual(cols[0], '.youtube.com');
         });
 
@@ -110,7 +110,7 @@ describe('Cookie Converter', function() {
                 id: 1
             }];
             const result = convertToNetscape(data);
-            const cols = result.trim().split('\t');
+            const cols = result.trim().split('\n').find(l => l.includes('\t')).split('\t');
             assert.strictEqual(cols[0], '.youtube.com');
             assert.strictEqual(cols[1], 'TRUE');
             assert.strictEqual(cols[2], '/');
@@ -172,7 +172,7 @@ describe('Cookie Converter', function() {
                 sourcePort: 443
             }];
             const result = convertToNetscape(data);
-            const cols = result.trim().split('\t');
+            const cols = result.trim().split('\n').find(l => l.includes('\t')).split('\t');
             assert.strictEqual(cols[0], '.youtube.com');
             assert.strictEqual(cols[1], 'TRUE');
             assert.strictEqual(cols[3], 'TRUE');
@@ -233,6 +233,122 @@ describe('Cookie Converter', function() {
             const expected = fs.readFileSync(txtPath, 'utf8').replace(/\r?\n$/, '');
             const actual = result.replace(/\r?\n$/, '');
             assert.strictEqual(actual, expected, 'converted output should match fixture exactly');
+        });
+
+        it('includes Netscape header as first line', function() {
+            const data = [{
+                domain: '.youtube.com',
+                hostOnly: false,
+                path: '/',
+                secure: true,
+                session: false,
+                expirationDate: 1735689600,
+                name: 'SID',
+                value: 'v'
+            }];
+            const result = convertToNetscape(data);
+            const firstLine = result.split('\n')[0];
+            assert.strictEqual(firstLine, '# Netscape HTTP Cookie File');
+        });
+
+        it('handles blank line between header and cookies (Netscape spec)', function() {
+            const data = [{
+                domain: '.youtube.com',
+                hostOnly: false,
+                path: '/',
+                secure: true,
+                session: false,
+                expirationDate: 1735689600,
+                name: 'SID',
+                value: 'v'
+            }];
+            const result = convertToNetscape(data);
+            const lines = result.split('\n');
+            assert.strictEqual(lines[0], '# Netscape HTTP Cookie File');
+        });
+    });
+
+    describe('Subdomain flag derived from domain (not source metadata)', function() {
+        it('Cookie Quick Manager: dotted domain with "This domain only raw: true" still yields TRUE flag', function() {
+            const data = [{
+                'Host raw': 'https://.youtube.com/',
+                'Name raw': 'SID',
+                'Content raw': 'v',
+                'Path raw': '/',
+                'Expires raw': 1735689600,
+                'Send for raw': true,
+                'HTTP only raw': 'false',
+                'This domain only raw': true,
+                'SameSite raw': 'unspecified',
+                'Store raw': 'firefox-default',
+                'First Party Domain': ''
+            }];
+            const result = convertToNetscape(data);
+            const cookieLine = result.split('\n').find(l => l.includes('SID'));
+            const cols = cookieLine.split('\t');
+            assert.strictEqual(cols[0], '.youtube.com');
+            assert.strictEqual(cols[1], 'TRUE', 'dotted domain MUST have TRUE flag regardless of source metadata');
+        });
+
+        it('Cookie Quick Manager: non-dotted domain yields FALSE flag', function() {
+            const data = [{
+                'Host raw': 'https://youtube.com/',
+                'Name raw': 'SID',
+                'Content raw': 'v',
+                'Path raw': '/',
+                'Expires raw': 1735689600,
+                'Send for raw': true,
+                'HTTP only raw': 'false',
+                'This domain only raw': false,
+                'SameSite raw': 'unspecified',
+                'Store raw': 'firefox-default',
+                'First Party Domain': ''
+            }];
+            const result = convertToNetscape(data);
+            const cookieLine = result.split('\n').find(l => l.includes('SID'));
+            const cols = cookieLine.split('\t');
+            assert.strictEqual(cols[0], 'youtube.com');
+            assert.strictEqual(cols[1], 'FALSE');
+        });
+
+        it('EditThisCookie: dotted domain with hostOnly=true still yields TRUE flag', function() {
+            const data = [{
+                domain: '.youtube.com',
+                hostOnly: true,
+                path: '/',
+                secure: true,
+                session: false,
+                expirationDate: 1735689600,
+                name: 'SID',
+                value: 'v'
+            }];
+            const result = convertToNetscape(data);
+            const cookieLine = result.split('\n').find(l => l.includes('SID'));
+            const cols = cookieLine.split('\t');
+            assert.strictEqual(cols[0], '.youtube.com');
+            assert.strictEqual(cols[1], 'TRUE', 'dotted domain MUST have TRUE flag regardless of hostOnly');
+        });
+    });
+
+    describe('Expiration handling', function() {
+        it('Cookie Quick Manager: decimal Expires raw is floored to integer', function() {
+            const data = [{
+                'Host raw': 'https://.youtube.com/',
+                'Name raw': 'GPS',
+                'Content raw': '1',
+                'Path raw': '/',
+                'Expires raw': 1767900822.205,
+                'Send for raw': true,
+                'HTTP only raw': 'false',
+                'This domain only raw': false,
+                'SameSite raw': 'unspecified',
+                'Store raw': 'firefox-default',
+                'First Party Domain': ''
+            }];
+            const result = convertToNetscape(data);
+            const cookieLine = result.split('\n').find(l => l.includes('GPS'));
+            const cols = cookieLine.split('\t');
+            assert.strictEqual(cols[4], '1767900822', 'decimal expiration must be floored to integer');
         });
     });
 });
