@@ -1,0 +1,30 @@
+.notifications-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 64px);
+    overflow: hidden;
+}
+
+.notifications-page-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    flex-shrink: 0;
+}
+
+.notifications-page-toolbar .spacer {
+    flex: 1 1 auto;
+}
+
+.notifications-page-list {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.notifications-empty-state {
+    margin: 10px;
+    text-align: center;
+}

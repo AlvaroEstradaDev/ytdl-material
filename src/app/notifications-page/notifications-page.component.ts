@@ -8,7 +8,7 @@ import { NotificationAction } from 'api-types/models/NotificationAction';
 @Component({
     selector: 'app-notifications-page',
     templateUrl: './notifications-page.component.html',
-    styleUrls: [],
+    styleUrls: ['./notifications-page.component.scss'],
     changeDetection: ChangeDetectionStrategy.Eager,
     standalone: false
 })
