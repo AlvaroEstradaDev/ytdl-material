@@ -79,7 +79,7 @@
             }
             @if (postsService.config?.Extra.enable_notifications) {
               <button [matMenuTriggerFor]="notificationsMenu" (menuOpened)="notificationMenuOpened()" mat-icon-button>@if (notification_count > 0) {
-                <mat-icon [matBadge]="notification_count" matBadgeColor="warn" matBadgeSize="small">notifications</mat-icon>
+                <mat-icon [matBadge]="notificationBadgeValue()" matBadgeColor="warn" matBadgeSize="small">notifications</mat-icon>
                 }@if (notification_count === 0) {
                 <mat-icon>notifications_none</mat-icon>
               }</button>
