@@ -9,10 +9,16 @@
           <mat-chip-option [value]="filter.key" [selected]="selectedFilters.includes(filter.key)" color="accent">{{filter.value.label}}</mat-chip-option>
         }
       </mat-chip-listbox>
-      <app-notifications-list class="notifications-list" [style.height]="list_height" (notificationAction)="notificationAction($event)" (deleteNotification)="deleteNotification($event)" [notifications]="filtered_notifications"></app-notifications-list>
+      <app-notifications-list class="notifications-list" [style.height]="list_height"
+        (notificationAction)="notificationAction($event)"
+        (deleteNotification)="deleteNotification($event)"
+        [notifications]="filtered_notifications"></app-notifications-list>
     </div>
     @if (notifications?.length > 0) {
       <button style="margin: 10px 0px 2px 10px;" color="warn" (click)="deleteAllNotifications()" mat-stroked-button>Remove all</button>
     }
   </div>
 }
+<div class="notifications-view-all">
+  <button mat-stroked-button (click)="viewAll()" i18n>View all notifications</button>
+</div>
