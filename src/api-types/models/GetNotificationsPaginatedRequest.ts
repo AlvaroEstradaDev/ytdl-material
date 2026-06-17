@@ -8,5 +8,5 @@ export type GetNotificationsPaginatedRequest = {
     limit?: number;
     offset?: number;
     types?: Array<NotificationType>;
-    unreadOnly?: boolean;
+    unread_only?: boolean;
 };

@@ -59,7 +59,7 @@ export class NotificationsComponent implements OnInit {
     this.postsService.getNotificationsPaginated({
       limit: 10,
       offset: 0,
-      unreadOnly: true,
+      unread_only: true,
       types: this.selectedFilters
     }).subscribe(res => {
       this.notifications = res.items;

@@ -55,6 +55,17 @@ describe('NotificationsComponent', () => {
     expect(emitted).toContain(0);
   });
 
+  it('sends paginated request with unread_only (snake_case wire format)', () => {
+    const posts = TestBed.inject(PostsService) as any as MockPostsService;
+    posts.getNotificationsPaginated.calls.reset();
+    component.getNotifications();
+    expect(posts.getNotificationsPaginated).toHaveBeenCalled();
+    const args = posts.getNotificationsPaginated.calls.mostRecent().args[0];
+    expect(args.unread_only).toBe(true);
+    expect(args.unreadOnly).toBeUndefined();
+    expect(args).toEqual({ limit: 10, offset: 0, unread_only: true, types: [] });
+  });
+
   it('viewAll navigates to /notifications', () => {
     const router = TestBed.inject(Router) as any;
     component.viewAll();
