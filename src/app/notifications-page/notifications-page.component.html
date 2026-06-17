@@ -2,7 +2,7 @@
   <div class="notifications-page-toolbar">
     <mat-chip-listbox [value]="selectedFilters" [multiple]="true" (change)="onFilterChange($event)">
       @for (filter of notificationFilters | keyvalue: originalOrder; track filter.key) {
-        <mat-chip-option [value]="filter.key" [selected]="selectedFilters.includes(filter.key)" color="accent">{{filter.value.label}}</mat-chip-option>
+        <mat-chip-option [value]="filter.key" [selected]="selectedFilters.includes($any(filter.key))" color="accent">{{filter.value.label}}</mat-chip-option>
       }
     </mat-chip-listbox>
     <span class="spacer"></span>
