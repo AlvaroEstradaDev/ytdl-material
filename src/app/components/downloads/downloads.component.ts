@@ -172,18 +172,21 @@ export class DownloadsComponent implements OnInit, OnDestroy {
       filters: this.activeFilters
     }).subscribe({
       next: (res) => {
-        this.raw_downloads = this.combineDownloads(this.raw_downloads, res.items);
-        this.raw_downloads.sort(this.sort_downloads);
-        this.downloads = this.groupDownloadsForDisplay(this.raw_downloads);
-        this.downloads.sort(this.sort_downloads);
-        this.total = res.total;
-        // Boundary clamp: if pageIndex is past the new end, step back and refetch.
-        const maxPage = Math.max(0, Math.ceil(this.total / this.pageSize) - 1);
+        // Boundary clamp: if pageIndex is past the new end, step back BEFORE
+        // writing visible state (otherwise UI flickers empty/stale for one
+        // HTTP roundtrip).
+        const maxPage = Math.max(0, Math.ceil(res.total / this.pageSize) - 1);
         if (this.pageIndex > maxPage) {
           this.pageIndex = maxPage;
           this.getCurrentDownloads(); // refetch on corrected page
           return;
         }
+
+        this.raw_downloads = this.combineDownloads(this.raw_downloads, res.items);
+        this.raw_downloads.sort(this.sort_downloads);
+        this.downloads = this.groupDownloadsForDisplay(this.raw_downloads);
+        this.downloads.sort(this.sort_downloads);
+        this.total = res.total;
         this.refreshOpenPlaylistProgressDialog();
         this.paused_download_exists = !!this.raw_downloads.find(d => d.paused && !d.error);
         this.running_download_exists = !!this.raw_downloads.find(d => !d.paused && !d.finished);
