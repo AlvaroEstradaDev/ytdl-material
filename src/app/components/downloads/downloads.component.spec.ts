@@ -17,6 +17,7 @@ describe('DownloadsComponent', () => {
       initialized: true,
       service_initialized: of(true),
       getCurrentDownloads: jasmine.createSpy('getCurrentDownloads').and.returnValue(of({downloads: []})),
+      getCurrentDownloadsPaginated: jasmine.createSpy('getCurrentDownloadsPaginated').and.returnValue(of({items: [], total: 0})),
       pauseDownload: jasmine.createSpy('pauseDownload').and.returnValue(of({success: true})),
       resumeDownload: jasmine.createSpy('resumeDownload').and.returnValue(of({success: true})),
       restartDownload: jasmine.createSpy('restartDownload').and.returnValue(of({success: true})),
@@ -85,11 +86,12 @@ describe('DownloadsComponent', () => {
   });
 
   it('tracks whether failed downloads can be retried', () => {
-    posts_service_mock.getCurrentDownloads.and.returnValue(of({
-      downloads: [
+    posts_service_mock.getCurrentDownloadsPaginated.and.returnValue(of({
+      items: [
         {uid: 'download-1', error: 'Network error', cancelled: false},
         {uid: 'download-2', error: null, cancelled: false}
-      ]
+      ],
+      total: 2
     }));
 
     component.getCurrentDownloads();
@@ -148,13 +150,32 @@ describe('DownloadsComponent', () => {
     expect(posts_service_mock.pauseDownload).not.toHaveBeenCalled();
   });
 
-  it('persists the downloads page size', () => {
-    component.pageChangeEvent({pageSize: 20} as any);
+  it('updates pageSize and pageIndex from paginator pageChange event', () => {
+    posts_service_mock.getCurrentDownloadsPaginated.and.returnValue(of({items: [], total: 200}));
 
-    const restored_component = new DownloadsComponent(posts_service_mock, router_mock, dialog_mock, clipboard_mock);
+    component.pageChangeEvent({limit: 50, offset: 100});
 
-    expect(localStorage.getItem(component.pageSizeStorageKey)).toBe('20');
-    expect(restored_component.pageSize).toBe(20);
+    expect(component.pageSize).toBe(50);
+    expect(component.pageIndex).toBe(2);
+    expect(posts_service_mock.getCurrentDownloadsPaginated).toHaveBeenCalled();
+  });
+
+  it('exposes empty pagination state on a fresh component', () => {
+    expect(component.pageIndex).toBe(0);
+    expect(component.total).toBe(0);
+    expect(component.downloads).toEqual([]);
+  });
+
+  it('clamps pageIndex when total shrinks past current page', () => {
+    // Page 5 with only 1 total item → must clamp back to page 0 and refetch.
+    posts_service_mock.getCurrentDownloadsPaginated.and.returnValue(of({items: [], total: 1}));
+    component.pageSize = 10;
+    component.pageIndex = 5;
+
+    component.getCurrentDownloads();
+
+    expect(component.pageIndex).toBe(0);
+    expect(posts_service_mock.getCurrentDownloadsPaginated).toHaveBeenCalledTimes(2);
   });
 
   it('merges chunked playlist progress with global sequential indices', () => {

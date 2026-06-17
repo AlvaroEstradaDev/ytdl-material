@@ -1,12 +1,9 @@
-import { Component, OnInit, OnDestroy, ViewChild, Input, EventEmitter, HostListener, ChangeDetectionStrategy } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input, EventEmitter, HostListener, ChangeDetectionStrategy } from '@angular/core';
 import { PostsService } from 'app/posts.services';
 import { trigger, transition, animateChild, stagger, query, style, animate } from '@angular/animations';
 import { Router } from '@angular/router';
-import { MatPaginator, PageEvent } from '@angular/material/paginator';
-import { MatTableDataSource } from '@angular/material/table';
 import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import { ConfirmDialogComponent } from 'app/dialogs/confirm-dialog/confirm-dialog.component';
-import { MatSort } from '@angular/material/sort';
 import { Clipboard } from '@angular/cdk/clipboard';
 import { Download, RestartDownloadResponse, SuccessObject } from 'api-types';
 import { forkJoin, of } from 'rxjs';
@@ -39,7 +36,7 @@ export class DownloadsComponent implements OnInit, OnDestroy {
   running_download_exists = false;
   failed_download_exists = false;
   readonly pageSizeStorageKey = 'downloads_page_size';
-  readonly pageSizeOptions = [5, 10, 20];
+  readonly pageSizeOptions = [10, 25, 50, 100];
   pageSize = 10;
 
   STEP_INDEX_TO_LABEL = {
@@ -54,7 +51,8 @@ export class DownloadsComponent implements OnInit, OnDestroy {
   displayedColumnsBig: string[] = ['timestamp_start', 'title', 'sub_name', 'percent_complete', 'actions'];
   displayedColumnsSmall: string[] = ['title', 'percent_complete', 'actions'];
   displayedColumns: string[] = this.displayedColumnsBig;
-  dataSource = new MatTableDataSource<Download>([]);
+  total = 0;
+  pageIndex = 0;
   playlist_progress_dialog_ref: MatDialogRef<PlaylistDownloadProgressDialogComponent> = null;
   playlist_progress_dialog_key: string = null;
   COMPLETE_LABEL = $localize`Complete`;
@@ -112,9 +110,6 @@ export class DownloadsComponent implements OnInit, OnDestroy {
 
   innerWidth: number;
 
-  @ViewChild(MatPaginator) paginator: MatPaginator;
-  @ViewChild(MatSort) sort: MatSort;
-
   @HostListener('window:resize')
   onResize(): void {
     this.innerWidth = window.innerWidth;
@@ -138,33 +133,6 @@ export class DownloadsComponent implements OnInit, OnDestroy {
     if (this.uids) this.displayedColumnsBig = this.displayedColumnsBig.filter(col => col !== 'sub_name');
     this.innerWidth = window.innerWidth;
     this.recalculateColumns();
-
-    this.dataSource.filterPredicate = (download: Download, filterStr: string) => {
-      if (!filterStr || filterStr === '{}') return true;
-      const filters: DownloadFilters = JSON.parse(filterStr);
-
-      if (filters.titleRegex) {
-        try {
-          if (!new RegExp(filters.titleRegex, 'i').test(download.title || '')) return false;
-        } catch { return true; }
-      }
-
-      if (filters.progressStages?.length) {
-        if (!filters.progressStages.includes(this.deriveStage(download))) return false;
-      }
-
-      if (filters.dateRange) {
-        const ts = download.timestamp_start * 1000;
-        if (filters.dateRange.from && ts < filters.dateRange.from) return false;
-        if (filters.dateRange.to && ts > filters.dateRange.to) return false;
-      }
-
-      if (filters.subscriptions?.length) {
-        if (!filters.subscriptions.includes(download.sub_name ?? 'N/A')) return false;
-      }
-
-      return true;
-    };
 
     if (this.postsService.initialized) {
       this.getCurrentDownloadsRecurring();
@@ -194,24 +162,39 @@ export class DownloadsComponent implements OnInit, OnDestroy {
   }
 
   getCurrentDownloads(): void {
-    this.postsService.getCurrentDownloads(this.uids).subscribe(res => {
-      if (res['downloads'] !== null && res['downloads'] !== undefined) {
-        this.raw_downloads = this.combineDownloads(this.raw_downloads, res['downloads']);
+    if (!this.postsService.config['Extra']['enable_downloads_manager']) {
+      this.router.navigate(['/home']);
+      return;
+    }
+    this.postsService.getCurrentDownloadsPaginated({
+      limit: this.pageSize,
+      offset: this.pageIndex * this.pageSize,
+      filters: this.activeFilters
+    }).subscribe({
+      next: (res) => {
+        this.raw_downloads = this.combineDownloads(this.raw_downloads, res.items);
         this.raw_downloads.sort(this.sort_downloads);
         this.downloads = this.groupDownloadsForDisplay(this.raw_downloads);
         this.downloads.sort(this.sort_downloads);
-        this.dataSource.data = this.downloads;
-        this.dataSource.paginator = this.paginator;
-        this.dataSource.sort = this.sort;
-        if (Object.keys(this.activeFilters).length > 0) {
-          this.dataSource.filter = JSON.stringify(this.activeFilters);
+        this.total = res.total;
+        // Boundary clamp: if pageIndex is past the new end, step back and refetch.
+        const maxPage = Math.max(0, Math.ceil(this.total / this.pageSize) - 1);
+        if (this.pageIndex > maxPage) {
+          this.pageIndex = maxPage;
+          this.getCurrentDownloads(); // refetch on corrected page
+          return;
         }
         this.refreshOpenPlaylistProgressDialog();
-        this.paused_download_exists = !!this.raw_downloads.find(download => download['paused'] && !download['error']);
-        this.running_download_exists = !!this.raw_downloads.find(download => !download['paused'] && !download['finished']);
-        this.failed_download_exists = this.raw_downloads.some(download => this.isFailedDownload(download));
+        this.paused_download_exists = !!this.raw_downloads.find(d => d.paused && !d.error);
+        this.running_download_exists = !!this.raw_downloads.find(d => !d.paused && !d.finished);
+        this.failed_download_exists = this.raw_downloads.some(d => this.isFailedDownload(d));
+        this.downloads_retrieved = true;
+      },
+      error: () => {
+        // Silent: don't blank the list on a flaky poll. Cadence is 1s; one
+        // failure is noise. Preserve previous data so the page doesn't flicker.
+        // (No toast — would spam at 1s cadence.)
       }
-      this.downloads_retrieved = true;
     });
   }
 
@@ -334,9 +317,10 @@ export class DownloadsComponent implements OnInit, OnDestroy {
     return !!download && !!download.error && !download.cancelled && download.error_type !== 'cancelled';
   }
 
-  pageChangeEvent(event: PageEvent): void {
-    this.pageSize = event.pageSize;
-    localStorage.setItem(this.pageSizeStorageKey, `${this.pageSize}`);
+  pageChangeEvent(event: { limit: number; offset: number }): void {
+    this.pageSize = event.limit;
+    this.pageIndex = Math.floor(event.offset / Math.max(1, event.limit));
+    this.getCurrentDownloads();
   }
 
   cancelDownload(download: Download): void {
@@ -827,8 +811,8 @@ export class DownloadsComponent implements OnInit, OnDestroy {
       const range = this.computeDatePresetRange(this.activeFilters.dateRange.preset);
       this.activeFilters.dateRange = { from: range.from, to: range.to, preset: this.activeFilters.dateRange.preset };
     }
-    this.dataSource.filter = JSON.stringify(this.activeFilters);
-    if (this.paginator) this.paginator.firstPage();
+    this.pageIndex = 0;
+    this.getCurrentDownloads();
     this.filterMenuOpenFor = null;
   }
 
@@ -874,7 +858,7 @@ export class DownloadsComponent implements OnInit, OnDestroy {
 
   getUniqueSubscriptionNames(): string[] {
     const names = new Set<string>();
-    for (const download of this.dataSource.data) {
+    for (const download of this.downloads) {
       names.add(download.sub_name ?? 'N/A');
     }
     return Array.from(names).sort();
