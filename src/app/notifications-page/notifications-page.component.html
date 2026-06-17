@@ -1,0 +1,28 @@
+<div class="notifications-page">
+  <div class="notifications-page-toolbar">
+    <mat-chip-listbox [value]="selectedFilters" [multiple]="true" (change)="onFilterChange($event)">
+      @for (filter of notificationFilters | keyvalue: originalOrder; track filter.key) {
+        <mat-chip-option [value]="filter.key" [selected]="selectedFilters.includes(filter.key)" color="accent">{{filter.value.label}}</mat-chip-option>
+      }
+    </mat-chip-listbox>
+    <span class="spacer"></span>
+    <button mat-stroked-button (click)="markAllRead()" i18n>Mark all as read</button>
+    <button color="warn" mat-stroked-button (click)="deleteAll()" i18n>Remove all</button>
+  </div>
+
+  @if (items.length === 0) {
+    <div class="notifications-empty-state" i18n>No notifications available</div>
+  } @else {
+    <app-notifications-list
+      [notifications]="items"
+      (notificationAction)="notificationAction($event)"
+      (deleteNotification)="deleteNotification($event)"></app-notifications-list>
+  }
+
+  <app-paginator
+    [total]="total"
+    [limit]="limit"
+    [offset]="offset"
+    [storageKey]="pageSizeStorageKey"
+    (pageChange)="onPageChange($event)"></app-paginator>
+</div>
