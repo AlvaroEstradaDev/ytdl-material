@@ -1,3 +1,7 @@
+:host {
+    display: block;
+}
+
 .notifications-page {
     display: flex;
     flex-direction: column;
@@ -17,6 +21,10 @@
     flex: 1 1 auto;
 }
 
+.notifications-page app-paginator {
+    flex-shrink: 0;
+}
+
 .notifications-page-list {
     display: block;
     flex: 1 1 auto;
@@ -27,4 +35,13 @@
 .notifications-empty-state {
     margin: 10px;
     text-align: center;
+    color: var(--mat-menu-item-label-text-color, var(--mat-sidenav-container-text-color, inherit));
+}
+
+:host-context(.dark-theme) .notifications-empty-state {
+    color: rgba(255, 255, 255, 0.87);
+}
+
+:host-context(.light-theme) .notifications-empty-state {
+    color: rgba(0, 0, 0, 0.87);
 }
