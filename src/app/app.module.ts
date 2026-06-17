@@ -100,6 +100,7 @@ import { OnlyNumberDirective } from './directives/only-number.directive';
 import { ArchiveViewerComponent } from './components/archive-viewer/archive-viewer.component';
 import { WebhookTemplateDialogComponent } from './dialogs/webhook-template-dialog/webhook-template-dialog.component';
 import { PlaylistDownloadProgressDialogComponent } from './dialogs/playlist-download-progress-dialog/playlist-download-progress-dialog.component';
+import { PaginatorComponent } from './components/paginator/paginator.component';
 
 registerLocaleData(es, 'es');
 
@@ -155,7 +156,8 @@ registerLocaleData(es, 'es');
         SortPropertyComponent,
         OnlyNumberDirective,
         ArchiveViewerComponent,
-        PlaylistDownloadProgressDialogComponent
+        PlaylistDownloadProgressDialogComponent,
+        PaginatorComponent
     ],
     exports: [
         HighlightPipe,
