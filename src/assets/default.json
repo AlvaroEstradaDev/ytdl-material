@@ -39,6 +39,7 @@
       "enable_notifications": true,
       "enable_all_notifications": true,
       "allowed_notification_types": [],
+      "notifications_retention_count": 500,
       "enable_rss_feed": false
     },
     "API": {

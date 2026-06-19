@@ -79,6 +79,65 @@ exports.sendNotification = async (notification) => {
     return notification;
 }
 
+/**
+ * Prune notifications per the configured retention cap. Runs two passes:
+ *   1. Every user with at least one notification (real user_uid).
+ *   2. The null-user_uid scope (single-user mode writes user_uid=null for
+ *      task notifications — without this pass those rows would never prune).
+ *
+ * Called from two sites: the one-time startup sweep (app.js migration gate)
+ * and the scheduled `prune_notifications` task (tasks.js). Returns the total
+ * number of records deleted across all passes.
+ *
+ * Cost note: O(N·U) where N is total notification count and U is distinct
+ * user_uid count. We load all rows once to discover scopes (a second full
+ * fetch happens per scope inside pruneTableToCount). Aggregation would reduce
+ * this but `aggregateRecords` is unsupported on local_db (db.js:919-923), so
+ * we accept the cost as the only cross-backend option. Acceptable for a weekly
+ * task on tables bounded by the retention cap itself.
+ */
+exports.pruneAllNotifications = async () => {
+    const cap = config_api.getConfigItem('ytdl_notifications_retention_count');
+    if (!cap || cap <= 0) {
+        logger.info('Notification retention disabled (cap <= 0). Skipping prune.');
+        return 0;
+    }
+    const SORT = { by: 'timestamp', order: -1 };
+
+    // Discover user_uids that actually have notifications, so we don't
+    // enumerate every user row (cheaper on large user tables).
+    const all = await db_api.getRecords('notifications', {}, false, SORT) || [];
+    const user_uids = new Set();
+    for (const n of all) {
+        if (n && n.user_uid !== undefined && n.user_uid !== null) {
+            user_uids.add(n.user_uid);
+        }
+    }
+    // Always run a null pass too if any null-user records exist.
+    const has_null_rows = all.some(n => n && n.user_uid === null);
+
+    let total_pruned = 0;
+    // Isolate per-scope failures so a transient DB error for one user doesn't
+    // skip the rest. The weekly task retries next run regardless.
+    for (const uid of user_uids) {
+        try {
+            total_pruned += await db_api.pruneTableToCount(
+                'notifications', { user_uid: uid }, SORT, cap);
+        } catch (err) {
+            logger.error(`Notification prune failed for user_uid=${uid}: ${err.message}`);
+        }
+    }
+    if (has_null_rows) {
+        try {
+            total_pruned += await db_api.pruneTableToCount(
+                'notifications', { user_uid: null }, SORT, cap);
+        } catch (err) {
+            logger.error(`Notification prune failed for null-user_uid scope: ${err.message}`);
+        }
+    }
+    return total_pruned;
+}
+
 exports.sendTaskNotification = async (task_obj, confirmed) => {
     if (!notificationEnabled('task_finished')) return;
     // workaround for tasks which are user_uid agnostic

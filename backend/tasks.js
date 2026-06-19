@@ -22,6 +22,17 @@ const DEFAULT_SUBSCRIPTIONS_CHECK_SCHEDULE = {
     }
 };
 
+// Weekly Sunday midnight — retention prune is low-priority housekeeping.
+// Users who want it more/less often can change via the UI like any task.
+const DEFAULT_PRUNE_NOTIFICATIONS_SCHEDULE = {
+    type: 'recurring',
+    data: {
+        dayOfWeek: 0,
+        hour: 0,
+        minute: 0
+    }
+};
+
 const TASKS = {
     backup_local_db: {
         run: db_api.backupDB,
@@ -63,6 +74,14 @@ const TASKS = {
         run: checkSubscriptions,
         title: 'Check subscriptions',
         defaultSchedule: () => JSON.parse(JSON.stringify(DEFAULT_SUBSCRIPTIONS_CHECK_SCHEDULE))
+    },
+    prune_notifications: {
+        run: async () => {
+            const pruned = await notifications_api.pruneAllNotifications();
+            return { pruned };
+        },
+        title: 'Prune notifications',
+        defaultSchedule: () => JSON.parse(JSON.stringify(DEFAULT_PRUNE_NOTIFICATIONS_SCHEDULE))
     }
 }
 const TASK_JOBS = new Map();

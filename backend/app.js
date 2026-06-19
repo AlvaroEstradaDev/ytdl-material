@@ -150,7 +150,8 @@ db.defaults(
         subscriptions: [],
         files_to_db_migration_complete: false,
         tasks_manager_role_migration_complete: false,
-        archives_migration_complete: false
+        archives_migration_complete: false,
+        notifications_retention_prune_complete: false
 }).write();
 
 users_db.defaults(
@@ -301,6 +302,20 @@ async function checkMigrations() {
         if (imported_archives) logger.info('Archives migration complete!');
         else logger.error('Failed to migrate archives!');
         db.set('archives_migration_complete', true).write();
+    }
+
+    const notifications_retention_prune_complete = db.get('notifications_retention_prune_complete').value();
+    if (!notifications_retention_prune_complete) {
+        logger.info('Running one-time notification retention sweep...');
+        try {
+            const total_pruned = await notifications_api.pruneAllNotifications();
+            logger.info(`Notification retention sweep complete. Pruned ${total_pruned} old records.`);
+        } catch (err) {
+            logger.error(`Notification retention sweep failed: ${err.message}`);
+        }
+        // Set the gate regardless of success/failure to avoid re-running every boot.
+        // Ongoing pruning is handled by the scheduled `prune_notifications` task.
+        db.set('notifications_retention_prune_complete', true).write();
     }
 
     return true;

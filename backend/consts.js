@@ -136,6 +136,10 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_allowed_notification_types',
         'path': 'YtdlMaterial.Extra.allowed_notification_types'
     },
+    'ytdl_notifications_retention_count': {
+        'key': 'ytdl_notifications_retention_count',
+        'path': 'YtdlMaterial.Extra.notifications_retention_count'
+    },
     'ytdl_enable_rss_feed': {
         'key': 'ytdl_enable_rss_feed',
         'path': 'YtdlMaterial.Extra.enable_rss_feed'

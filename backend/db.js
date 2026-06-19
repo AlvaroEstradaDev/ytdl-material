@@ -891,6 +891,80 @@ exports.getPaginatedRecords = async (table, filter_obj = {}, sort = null, pagina
     return { items, total, limit, offset };
 };
 
+/**
+ * Caps a table's row count for a given filter, keeping the most recent records
+ * by sort key. Used by the notifications retention feature to bound growth.
+ *
+ * Behavior contract:
+ *   - max_count <= 0  → no-op (caller treats 0 as "unlimited").
+ *   - count <= max_count  → no-op.
+ *   - count > max_count * HYSTERESIS_FACTOR (1.2)  → delete the oldest
+ *     (count - max_count) records in a single batched removeAllRecords call
+ *     using {<primary_key>: {$in: [uids]}}. Hysteresis avoids pruning on
+ *     every insert once we're near the cap.
+ *   - Sort ties on `timestamp` (seconds granularity) resolve to insertion
+ *     order via the underlying backend's stable sort. Acceptable here — any
+ *     equally-old notification may be pruned.
+ *
+ * Works across all three backends (local_db / postgres / mongo) because it
+ * only composes existing getRecords + removeAllRecords primitives.
+ *
+ * @param {string} table - Table name (must exist in `tables` schema).
+ * @param {object} filter_obj - Mongo-style filter scoping the prune (e.g.
+ *     {user_uid: 'X'}). Required: never prune the whole table accidentally.
+ * @param {{by: string, order: 1|-1}} sort - Sort spec, same shape as getRecords.
+ *     Use {by: 'timestamp', order: -1} so newest come first and the tail is
+ *     pruned.
+ * @param {number} max_count - Retention cap. <=0 means unlimited.
+ * @returns {Promise<number>} Number of records deleted. 0 when no-op.
+ */
+exports.pruneTableToCount = async (table, filter_obj, sort, max_count) => {
+    if (!tables[table]) {
+        logger.error(`Refusing to prune unknown table '${table}'.`);
+        return 0;
+    }
+    if (!filter_obj || typeof filter_obj !== 'object' || Object.keys(filter_obj).length === 0) {
+        // Defensive: refuse to prune with an empty filter, which would match
+        // every row in the table and could delete unrelated records if the
+        // caller forgot to scope.
+        logger.error(`Refusing to prune '${table}' with empty filter (would match all rows).`);
+        return 0;
+    }
+    if (!Number.isFinite(Number(max_count)) || Number(max_count) <= 0) {
+        return 0;
+    }
+    const cap = Math.floor(Number(max_count));
+
+    const total = await exports.getRecords(table, filter_obj, true);
+    const HYSTERESIS_FACTOR = 1.2;
+    if (total <= Math.ceil(cap * HYSTERESIS_FACTOR)) return 0;
+
+    // Fetch matching records sorted (newest first), then take the tail to delete.
+    const all = await exports.getRecords(table, filter_obj, false, sort);
+    const to_delete = all.slice(cap);
+    if (to_delete.length === 0) return 0;
+
+    const primary_key = tables[table].primary_key || 'uid';
+    const ids_to_delete = to_delete.map(record => record[primary_key]).filter(v => v !== undefined && v !== null);
+    if (ids_to_delete.length === 0) return 0;
+
+    // Chunk the delete to avoid blowing past backend limits on huge backlogs
+    // (e.g. postgres placeholder ceiling ~65535, mongo large $in is slow).
+    // 1000/batch is a safe balance across local_db / mongo / postgres.
+    const CHUNK = 1000;
+    let deleted = 0;
+    for (let i = 0; i < ids_to_delete.length; i += CHUNK) {
+        const chunk = ids_to_delete.slice(i, i + CHUNK);
+        const ok = await exports.removeAllRecords(table, {[primary_key]: {$in: chunk}});
+        if (!ok) {
+            logger.error(`pruneTableToCount: removeAllRecords reported failure for ${table} at offset ${i} (${chunk.length} ids)`);
+        } else {
+            deleted += chunk.length;
+        }
+    }
+    return deleted;
+};
+
 exports.aggregateRecords = async (table, pipeline = []) => {
     if (!tables[table]) {
         logger.error(`Refusing to aggregate unknown table '${table}'.`);
@@ -1266,7 +1340,10 @@ exports.generateJSONTables = async (db_json, users_json) => {
     tables_obj.subscriptions = createSubscriptionsRecords(subscriptions);
     tables_obj.users = createUsersRecords(users);
     tables_obj.roles = createRolesRecords(users_json['roles']);
-    tables_obj.downloads = createDownloadsRecords(db_json['downloads'])
+    tables_obj.downloads = createDownloadsRecords(db_json['downloads']);
+    // Preserve notifications across the 4.2->4.3 migration. Previously dropped
+    // here, which silently wiped user notification history on container update.
+    tables_obj.notifications = db_json['notifications'] || [];
     
     return tables_obj;
 }
