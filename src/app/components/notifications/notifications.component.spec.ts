@@ -8,10 +8,9 @@ import { NotificationActionsService } from 'app/notifications-page/notification-
 class MockPostsService {
   initialized = true;
   service_initialized = of(true);
-  getNotificationsPaginated = jasmine.createSpy().and.returnValue(of({ items: [], total: 0, limit: 10, offset: 0 }));
+  getNotificationsPaginated = jasmine.createSpy().and.returnValue(of({ items: [], total: 0, unread_total: 0, limit: 10, offset: 0 }));
   deleteNotification = jasmine.createSpy().and.returnValue(of({}));
   deleteAllNotifications = jasmine.createSpy().and.returnValue(of({}));
-  setNotificationsToRead = jasmine.createSpy().and.returnValue(of({}));
 }
 
 class MockRouter {
@@ -47,23 +46,29 @@ describe('NotificationsComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('emits notificationCount with total from paginated response', () => {
+  it('emits notificationCount with unread_total from paginated response', () => {
+    // Use a non-zero mock so the assertion can distinguish real propagation
+    // from a hardcoded 0 (the failure mode the original test hid).
+    const posts = TestBed.inject(PostsService) as any as MockPostsService;
+    posts.getNotificationsPaginated.and.returnValue(
+      of({ items: [], total: 99, unread_total: 7, limit: 10, offset: 0 })
+    );
     const emitted: number[] = [];
     component.notificationCount.subscribe(n => emitted.push(n));
     component.getNotifications();
-    // mock returns total: 0 synchronously
-    expect(emitted).toContain(0);
+    expect(emitted).toContain(7);
+    expect(emitted).not.toContain(99);
   });
 
-  it('sends paginated request with unread_only (snake_case wire format)', () => {
+  it('sends paginated request without unread_only (bell shows last 10 regardless of read state)', () => {
     const posts = TestBed.inject(PostsService) as any as MockPostsService;
     posts.getNotificationsPaginated.calls.reset();
     component.getNotifications();
     expect(posts.getNotificationsPaginated).toHaveBeenCalled();
     const args = posts.getNotificationsPaginated.calls.mostRecent().args[0];
-    expect(args.unread_only).toBe(true);
+    expect(args.unread_only).toBeUndefined();
     expect(args.unreadOnly).toBeUndefined();
-    expect(args).toEqual({ limit: 10, offset: 0, unread_only: true, types: [] });
+    expect(args).toEqual({ limit: 10, offset: 0, types: [] });
   });
 
   it('viewAll navigates to /notifications', () => {

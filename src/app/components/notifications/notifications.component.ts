@@ -21,7 +21,7 @@ export class NotificationsComponent implements OnInit {
   list_height = '65vh';
 
   // Kept for backwards compatibility with app.component.html template binding.
-  // AppComponent renders `9+` past 9 unread via notificationBadgeValue() in Task 11.
+  // AppComponent renders `9+` past 9 unread via notificationBadgeValue().
   // Emits the raw unread total; rendering layer formats it.
   @Output() notificationCount = new EventEmitter<number>();
 
@@ -51,21 +51,21 @@ export class NotificationsComponent implements OnInit {
   }
 
   /**
-   * Fetch up to 10 unread notifications (bell cap). Server returns total unread
-   * count separately — we emit it via notificationCount so AppComponent can
-   * render the badge. Filter chips re-trigger this with the chosen types.
+   * Fetch up to 10 most recent notifications (any read state). Server returns
+   * `unread_total` separately (global, ignores type filter) — we emit it via
+   * notificationCount so AppComponent can render the bell badge. Filter chips
+   * re-trigger this with the chosen types.
    */
   getNotifications(): void {
     this.postsService.getNotificationsPaginated({
       limit: 10,
       offset: 0,
-      unread_only: true,
       types: this.selectedFilters
     }).subscribe(res => {
       this.notifications = res.items;
-      this.unread_total = res.total;
+      this.unread_total = res.unread_total;
       this.filtered_notifications = res.items;
-      this.notificationCount.emit(res.total);
+      this.notificationCount.emit(res.unread_total);
       this.calculateListHeight();
     });
   }
@@ -89,18 +89,6 @@ export class NotificationsComponent implements OnInit {
     this.postsService.deleteAllNotifications().subscribe(() => {
       this.notifications = [];
       this.filtered_notifications = [];
-      this.unread_total = 0;
-      this.notificationCount.emit(0);
-    });
-  }
-
-  /**
-   * Marks all of the user's notifications as read on the server. The endpoint
-   * updates every notification for this user (not just the loaded 10) — so the
-   * unread count drops to 0 client-side too.
-   */
-  setNotificationsToRead(): void {
-    this.postsService.setNotificationsToRead([]).subscribe(() => {
       this.unread_total = 0;
       this.notificationCount.emit(0);
     });

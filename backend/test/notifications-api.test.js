@@ -59,4 +59,21 @@ describe('notifications pagination (query construction)', function() {
         assert.strictEqual(res.items[0].timestamp, 1024);
         assert.strictEqual(res.items[1].timestamp, 1023);
     });
+
+    it('global unread count ignores type filter (mirrors /api/getNotifications unread_total)', async function() {
+        // The endpoint builds its badge count from {user_uid, read:false} only,
+        // independent of the types[] filter applied to the listed items. This
+        // test pins that contract: even with a narrow list filter, the unread
+        // count reflects every unread notification for the user.
+        const list_query = { user_uid, type: { $in: ['download_error'] } };
+        const list = await db_api.getPaginatedRecords('notifications', list_query, SORT, { limit: 10, offset: 0 });
+
+        const unread_total = await db_api.getRecords('notifications', { user_uid, read: false }, true);
+
+        // 25 total, 5 read → 20 unread globally.
+        assert.strictEqual(unread_total, 20);
+        // Listed items respect the type filter and include both read+unread.
+        assert.ok(list.items.every(n => n.type === 'download_error'));
+        assert.strictEqual(list.total, 12);
+    });
 });

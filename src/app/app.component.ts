@@ -312,10 +312,6 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     this.notifications.getNotifications();
   }
 
-  notificationMenuClosed(): void {
-    this.notifications.setNotificationsToRead();
-  }
-
   activeDownloadsMenuButtonClicked(): void {
     this.active_downloads_opened_manually = true;
     this.active_downloads_auto_opened = false;

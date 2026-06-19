@@ -84,7 +84,7 @@
                 <mat-icon>notifications_none</mat-icon>
               }</button>
             }
-            <mat-menu [classList]="'notifications-menu'" (close)="notificationMenuClosed()" #notificationsMenu="matMenu">
+            <mat-menu [classList]="'notifications-menu'" #notificationsMenu="matMenu">
               <app-notifications #notifications (notificationCount)="notificationCountUpdate($event)" (click)="$event.stopPropagation()"></app-notifications>
             </mat-menu>
             <button [matMenuTriggerFor]="menuSettings" mat-icon-button><mat-icon>more_vert</mat-icon></button>

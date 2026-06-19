@@ -3288,18 +3288,26 @@ app.post('/api/getNotifications', optionalJwt, async (req, res) => {
     if (types.length > 0) query.type = { $in: types };
 
     try {
-        const result = await db_api.getPaginatedRecords(
-            'notifications',
-            query,
-            { by: 'timestamp', order: -1 },
-            { limit, offset }
-        );
-        res.send(result);
+        // Unread count for the bell badge. Always global (ignores type filter)
+        // so the badge reflects total unread regardless of active filter chips.
+        const unread_query = { user_uid: uuid, read: false };
+        const [result, unread_total] = await Promise.all([
+            db_api.getPaginatedRecords(
+                'notifications',
+                query,
+                { by: 'timestamp', order: -1 },
+                { limit, offset }
+            ),
+            db_api.getRecords('notifications', unread_query, true)
+        ]);
+        // When unread_only=true the filtered total already equals unread count;
+        // the extra query is cheap and keeps the contract uniform.
+        res.send({ ...result, unread_total });
     } catch (err) {
         // Log the real error, return a defined fallback shape so clients don't
         // crash on a malformed response. Code-review guardrail (a): log + fallback.
         logger.error(`getNotifications failed: ${err.message}`);
-        res.status(500).send({ items: [], total: 0, limit, offset });
+        res.status(500).send({ items: [], total: 0, unread_total: 0, limit, offset });
     }
 });
 

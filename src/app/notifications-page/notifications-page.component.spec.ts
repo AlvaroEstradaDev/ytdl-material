@@ -13,6 +13,7 @@ class MockPostsService {
       { uid: 'b', type: 'download_error',    text: 't', read: false, timestamp: 2, data: {}, actions: [] }
     ],
     total: 2,
+    unread_total: 2,
     limit: 10,
     offset: 0
   }));
