@@ -11,6 +11,7 @@ class MockPostsService {
   getNotificationsPaginated = jasmine.createSpy().and.returnValue(of({ items: [], total: 0, unread_total: 0, limit: 10, offset: 0 }));
   deleteNotification = jasmine.createSpy().and.returnValue(of({}));
   deleteAllNotifications = jasmine.createSpy().and.returnValue(of({}));
+  setNotificationsToRead = jasmine.createSpy().and.returnValue(of({}));
 }
 
 class MockRouter {
@@ -74,6 +75,36 @@ describe('NotificationsComponent', () => {
   it('viewAll navigates to /notifications', () => {
     const router = TestBed.inject(Router) as any;
     component.viewAll();
+    expect(router.navigate).toHaveBeenCalledWith(['/notifications']);
+  });
+
+  it('markAllRead marks all as read, resets unread_total, emits 0, refetches', () => {
+    const posts = TestBed.inject(PostsService) as any as MockPostsService;
+    posts.getNotificationsPaginated.calls.reset();
+    posts.setNotificationsToRead.calls.reset();
+
+    // Seed a non-zero unread total so we can assert it actually drops.
+    component.unread_total = 5;
+    const emitted: number[] = [];
+    component.notificationCount.subscribe(n => emitted.push(n));
+
+    component.markAllRead();
+
+    expect(posts.setNotificationsToRead).toHaveBeenCalledWith([]);
+    expect(component.unread_total).toBe(0);
+    expect(emitted).toContain(0);
+    expect(posts.getNotificationsPaginated).toHaveBeenCalled();
+  });
+
+  it('viewAll emits viewAllClicked before navigating', () => {
+    const router = TestBed.inject(Router) as any;
+    const order: string[] = [];
+    router.navigate.and.callFake(() => { order.push('navigate'); return Promise.resolve(true); });
+    component.viewAllClicked.subscribe(() => order.push('emit'));
+
+    component.viewAll();
+
+    expect(order).toEqual(['emit', 'navigate']);
     expect(router.navigate).toHaveBeenCalledWith(['/notifications']);
   });
 });
