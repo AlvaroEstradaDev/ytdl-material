@@ -2,9 +2,9 @@ import { Component, ElementRef, EventEmitter, OnInit, Output, ChangeDetectionStr
 import { Router } from '@angular/router';
 import { PostsService } from 'app/posts.services';
 import { Notification, NotificationType } from 'api-types';
-import { NotificationAction } from 'api-types/models/NotificationAction';
 import { MatChipListboxChange } from '@angular/material/chips';
 import { filter, take } from 'rxjs/operators';
+import { NotificationActionsService } from 'app/notifications-page/notification-actions.service';
 
 @Component({
     selector: 'app-notifications',
@@ -17,31 +17,30 @@ export class NotificationsComponent implements OnInit {
 
   notifications: Notification[] = null;
   filtered_notifications: Notification[] = null;
+  unread_total = 0;
   list_height = '65vh';
 
+  // Kept for backwards compatibility with app.component.html template binding.
+  // AppComponent renders `9+` past 9 unread via notificationBadgeValue().
+  // Emits the raw unread total; rendering layer formats it.
   @Output() notificationCount = new EventEmitter<number>();
 
-  notificationFilters: { [key in NotificationType]: {key: string, label: string} } = {
-    download_complete: {
-      key: 'download_complete',
-      label: $localize`Download completed`
-    },
-    download_error: {
-      key: 'download_error',
-      label: $localize`Download error`
-    },
-    task_finished: {
-      key: 'task_finished',
-      label: $localize`Task`
-    },
+  notificationFilters: { [key in NotificationType]: { key: string; label: string } } = {
+    download_complete: { key: 'download_complete', label: $localize`Download completed` },
+    download_error:    { key: 'download_error',    label: $localize`Download error` },
+    task_finished:     { key: 'task_finished',     label: $localize`Task` },
   };
 
-  selectedFilters = [];
+  selectedFilters: NotificationType[] = [];
 
-  constructor(public postsService: PostsService, private router: Router, private elRef: ElementRef) { }
+  constructor(
+    public postsService: PostsService,
+    private router: Router,
+    private elRef: ElementRef,
+    private actions: NotificationActionsService
+  ) {}
 
   ngOnInit(): void {
-    // wait for init
     if (this.postsService.initialized) {
       this.getNotifications();
     } else {
@@ -51,69 +50,53 @@ export class NotificationsComponent implements OnInit {
     }
   }
 
+  /**
+   * Fetch up to 10 most recent notifications (any read state). Server returns
+   * `unread_total` separately (global, ignores type filter) — we emit it via
+   * notificationCount so AppComponent can render the bell badge. Filter chips
+   * re-trigger this with the chosen types.
+   */
   getNotifications(): void {
-    this.postsService.getNotifications().subscribe(res => {
-      this.notifications = res['notifications'];
-      this.notifications.sort((a, b) => b.timestamp - a.timestamp);
-      this.notificationCount.emit(this.notifications.filter(notification => !notification.read).length);
-
-      this.filterNotifications();
+    this.postsService.getNotificationsPaginated({
+      limit: 10,
+      offset: 0,
+      types: this.selectedFilters
+    }).subscribe(res => {
+      this.notifications = res.items;
+      this.unread_total = res.unread_total;
+      this.filtered_notifications = res.items;
+      this.notificationCount.emit(res.unread_total);
+      this.calculateListHeight();
     });
   }
 
-  notificationAction(action_info: {notification: Notification, action: NotificationAction}): void {
-    switch (action_info['action']) {
-      case NotificationAction.PLAY:
-        this.router.navigate(['player', {uid: action_info['notification']['data']['file_uid']}]);
-        break;
-      case NotificationAction.VIEW_DOWNLOAD_ERROR:
-        this.router.navigate(['downloads']);
-        break;
-      case NotificationAction.RETRY_DOWNLOAD:
-        this.postsService.restartDownload(action_info['notification']['data']['download_uid']).subscribe(res => {
-          this.postsService.openSnackBar($localize`Download restarted!`);
-          this.deleteNotification(action_info['notification']['uid']);
-        });
-        break;
-      case NotificationAction.VIEW_TASKS:
-        this.router.navigate(['tasks']);
-        break;
-      default:
-        console.error(`Notification action ${action_info['action']} does not exist!`);
-        break;
-    }
+  notificationAction(event: { notification: Notification; action: any }): void {
+    this.actions.run(event);
   }
 
   deleteNotification(uid: string): void {
-    this.postsService.deleteNotification(uid).subscribe(res => {
+    this.postsService.deleteNotification(uid).subscribe(() => {
       if (!this.notifications) return;
-      this.notifications = this.notifications.filter(notification => notification['uid'] !== uid);
-      this.filterNotifications();
-      this.notificationCount.emit(this.notifications.filter(notification => !notification.read).length);
+      this.notifications = this.notifications.filter(n => n.uid !== uid);
+      this.filtered_notifications = this.notifications;
+      this.unread_total = Math.max(0, this.unread_total - 1);
+      this.notificationCount.emit(this.unread_total);
+      this.calculateListHeight();
     });
   }
 
   deleteAllNotifications(): void {
-    this.postsService.deleteAllNotifications().subscribe(res => {
+    this.postsService.deleteAllNotifications().subscribe(() => {
       this.notifications = [];
       this.filtered_notifications = [];
-      this.getNotifications();
+      this.unread_total = 0;
+      this.notificationCount.emit(0);
     });
-    this.notificationCount.emit(0);
-  }
-
-  setNotificationsToRead(): void {
-    const uids = this.notifications.map(notification => notification.uid);
-    this.postsService.setNotificationsToRead(uids).subscribe(res => {
-      this.getNotifications();
-    });
-    this.notificationCount.emit(0);
   }
 
   filterNotifications(): void {
-    this.filtered_notifications = this.notifications.filter(notification => this.selectedFilters.length === 0 || this.selectedFilters.includes(notification.type));
-    // We need to do this to get the virtual scroll component to have an appropriate height
-    this.calculateListHeight();
+    // Re-fetch with the new type filter applied server-side.
+    this.getNotifications();
   }
 
   selectedFiltersChanged(event: MatChipListboxChange): void {
@@ -121,14 +104,16 @@ export class NotificationsComponent implements OnInit {
     this.filterNotifications();
   }
 
-  calculateListHeight() {
+  viewAll(): void {
+    this.router.navigate(['/notifications']);
+  }
+
+  calculateListHeight(): void {
     const avgHeight = 166;
-    const calcHeight = this.filtered_notifications.length * avgHeight;
-    this.list_height = calcHeight > window.innerHeight*0.65 ? '65vh' : `${calcHeight}px`;
+    const count = this.filtered_notifications?.length ?? 0;
+    const calcHeight = count * avgHeight;
+    this.list_height = calcHeight > window.innerHeight * 0.65 ? '65vh' : `${calcHeight}px`;
   }
 
-  originalOrder = (): number => {
-    return 0;
-  }
-
+  originalOrder = (): number => 0;
 }

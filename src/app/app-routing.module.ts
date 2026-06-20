@@ -10,6 +10,7 @@ import { DownloadsComponent } from './components/downloads/downloads.component';
 import { DuplicatesComponent } from './components/duplicates/duplicates.component';
 import { SettingsComponent } from './settings/settings.component';
 import { TasksComponent } from './components/tasks/tasks.component';
+import { NotificationsPageComponent } from './notifications-page/notifications-page.component';
 
 const routes: Routes = [
   { path: 'home', component: MainComponent, canActivate: [PostsService] },
@@ -21,6 +22,7 @@ const routes: Routes = [
   { path: 'downloads', component: DownloadsComponent, canActivate: [PostsService] },
   { path: 'duplicates', component: DuplicatesComponent, canActivate: [PostsService] },
   { path: 'tasks', component: TasksComponent, canActivate: [PostsService] },
+  { path: 'notifications', component: NotificationsPageComponent, canActivate: [PostsService] },
   { path: '', redirectTo: '/home', pathMatch: 'full' }
 ];
 

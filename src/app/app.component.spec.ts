@@ -266,4 +266,11 @@ describe('AppComponent', () => {
     expect(event_mock.stopPropagation).toHaveBeenCalled();
     expect(cancel_spy).toHaveBeenCalledWith('active-1');
   });
+
+  it('notificationBadgeValue shows 9+ past 9 unread', () => {
+    component.notification_count = 0;   expect(component.notificationBadgeValue()).toBe(0);
+    component.notification_count = 9;   expect(component.notificationBadgeValue()).toBe(9);
+    component.notification_count = 10;  expect(component.notificationBadgeValue()).toBe('9+');
+    component.notification_count = 999; expect(component.notificationBadgeValue()).toBe('9+');
+  });
 });

@@ -114,7 +114,11 @@ import {
     Subscription,
     RestartDownloadResponse,
     TaskType,
-    CheckSubscriptionRequest
+    CheckSubscriptionRequest,
+    PaginatedNotificationsResponse,
+    GetNotificationsPaginatedRequest,
+    PaginatedDownloadsResponse,
+    GetCurrentDownloadsPaginatedRequest
 } from '../api-types';
 import { isoLangs } from './dialogs/user-profile-dialog/locales_list';
 import { Title } from '@angular/platform-browser';
@@ -703,6 +707,10 @@ export class PostsService {
         return this.http.post<GetAllDownloadsResponse>(this.path + 'downloads', body, this.httpOptions);
     }
 
+    getCurrentDownloadsPaginated(params: GetCurrentDownloadsPaginatedRequest): Observable<PaginatedDownloadsResponse> {
+        return this.http.post<PaginatedDownloadsResponse>(this.path + 'downloads', params, this.httpOptions);
+    }
+
     getCurrentDownload(download_uid: string) {
         const body: GetDownloadRequest = {download_uid: download_uid};
         return this.http.post<GetDownloadResponse>(this.path + 'download', body, this.httpOptions);
@@ -1070,6 +1078,10 @@ export class PostsService {
     }
 
     // notifications
+
+    getNotificationsPaginated(params: GetNotificationsPaginatedRequest): Observable<PaginatedNotificationsResponse> {
+        return this.http.post<PaginatedNotificationsResponse>(this.path + 'getNotifications', params, this.httpOptions);
+    }
 
     getNotifications(): Observable<GetNotificationsResponse> {
         return this.http.post<GetNotificationsResponse>(this.path + 'getNotifications', {},

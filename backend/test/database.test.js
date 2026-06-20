@@ -295,5 +295,50 @@ describe('Database', async function() {
             const result = db_api.applyFilterLocalDB([{test1: {test2: 'test3'}}, {test4: 'test5'}], {'test1.test2': 'test3'}, 'find');
             assert(result && result['test1']['test2'] === 'test3');
         });
+
+        // ---- logical operators + null normalization (added in 07a45329) ----
+        // 'filter' returns the matching array so multi-record cases are asserted in full.
+
+        it('$and matches records satisfying all sub-queries', async function() {
+            const records = [{a: 1, b: 1}, {a: 1, b: 2}];
+            const result = db_api.applyFilterLocalDB(records, {$and: [{a: 1}, {b: 2}]}, 'filter');
+            assert.deepStrictEqual(result, [{a: 1, b: 2}]);
+        });
+
+        it('$or matches records satisfying any sub-query', async function() {
+            const records = [{a: 1}, {a: 2}, {a: 3}];
+            const result = db_api.applyFilterLocalDB(records, {$or: [{a: 1}, {a: 3}]}, 'filter');
+            assert.deepStrictEqual(result, [{a: 1}, {a: 3}]);
+        });
+
+        it('$nor matches records satisfying no sub-query', async function() {
+            const records = [{a: 1}, {a: 2}, {a: 3}];
+            const result = db_api.applyFilterLocalDB(records, {$nor: [{a: 1}, {a: 3}]}, 'filter');
+            assert.deepStrictEqual(result, [{a: 2}]);
+        });
+
+        it('$nin matches records whose value is NOT in the list', async function() {
+            const records = [{x: 'a'}, {x: 'b'}, {x: 'c'}];
+            const result = db_api.applyFilterLocalDB(records, {x: {$nin: ['a', 'b']}}, 'filter');
+            assert.deepStrictEqual(result, [{x: 'c'}]);
+        });
+
+        it('$not inverts inner predicate on same field', async function() {
+            const records = [{step: 0}, {step: 1}, {step: 2}, {step: null}, {}];
+            const result = db_api.applyFilterLocalDB(records, {step: {$not: {$in: [0, 1]}}}, 'filter');
+            assert.deepStrictEqual(result, [{step: 2}, {step: null}, {}]);
+        });
+
+        it('$ne treats missing field as null (Mongo parity)', async function() {
+            const records = [{x: 1}, {x: null}, {}];
+            const result = db_api.applyFilterLocalDB(records, {x: {$ne: null}}, 'filter');
+            assert.deepStrictEqual(result, [{x: 1}]);
+        });
+
+        it('$in treats missing field as null (Mongo parity)', async function() {
+            const records = [{x: null}, {}, {x: 1}];
+            const result = db_api.applyFilterLocalDB(records, {x: {$in: [null]}}, 'filter');
+            assert.deepStrictEqual(result, [{x: null}, {}]);
+        });
     })
 });

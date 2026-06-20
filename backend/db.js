@@ -146,7 +146,8 @@ const tables = {
             { keys: { user_uid: 1, finished: 1, paused: 1 } },
             { keys: { sub_id: 1, error: 1, finished: 1 } },
             { keys: { sub_id: 1, url: 1, error: 1, finished: 1 } },
-            { keys: { running: 1, sub_id: 1 } }
+            { keys: { running: 1, sub_id: 1 } },
+            { keys: { user_uid: 1, timestamp_start: -1 } }
         ]
     },
     tasks: {
@@ -167,7 +168,8 @@ const tables = {
             'data.task_key': 'text'
         },
         indexes: [
-            { keys: { user_uid: 1 } }
+            { keys: { user_uid: 1 } },
+            { keys: { user_uid: 1, timestamp: -1 } }
         ]
     },
     archives: {
@@ -856,6 +858,113 @@ exports.getRecords = async (table, filter_obj = null, return_count = false, sort
     return await cursor.toArray();
 }
 
+/**
+ * Paginated read helper. Orchestrates two calls to getRecords (count + page slice)
+ * so it works across local_db, postgres, and mongo backends.
+ *
+ * @param {string} table - Table name.
+ * @param {object} filter_obj - Mongo-style filter (default {}).
+ * @param {{by: string, order: 1|-1}} sort - Sort spec, same shape as getRecords.
+ *     Callers SHOULD pass sort; pagination without sort yields non-deterministic
+ *     page ordering (duplicates/gaps across pages are possible).
+ * @param {{limit?: number, offset?: number}} pagination - limit clamped to [1,100]
+ *     (default 10); offset clamped to >=0 (default 0).
+ * @returns {Promise<{items: Array, total: number, limit: number, offset: number}>}
+ */
+exports.getPaginatedRecords = async (table, filter_obj = {}, sort = null, pagination = {}) => {
+    // Treat null/undefined as "use default"; coerce only finite numbers.
+    let limit = pagination.limit;
+    if (limit == null || !Number.isFinite(Number(limit))) limit = 10;
+    let offset = pagination.offset;
+    if (offset == null || !Number.isFinite(Number(offset))) offset = 0;
+    limit = Math.max(1, Math.min(100, Math.floor(Number(limit))));
+    offset = Math.max(0, Math.floor(Number(offset)));
+
+    // Total count of records matching the filter (no range applied).
+    // existing getRecords(table, filter, return_count=true) returns the filtered count.
+    const total = await exports.getRecords(table, filter_obj, true);
+
+    // Page slice. Existing getRecords uses range = [start, end_exclusive]
+    // where end = offset + limit. See getRecords above for reference.
+    const items = await exports.getRecords(table, filter_obj, false, sort, [offset, offset + limit]);
+
+    return { items, total, limit, offset };
+};
+
+/**
+ * Caps a table's row count for a given filter, keeping the most recent records
+ * by sort key. Used by the notifications retention feature to bound growth.
+ *
+ * Behavior contract:
+ *   - max_count <= 0  → no-op (caller treats 0 as "unlimited").
+ *   - count <= max_count  → no-op.
+ *   - count > max_count * HYSTERESIS_FACTOR (1.2)  → delete the oldest
+ *     (count - max_count) records in a single batched removeAllRecords call
+ *     using {<primary_key>: {$in: [uids]}}. Hysteresis avoids pruning on
+ *     every insert once we're near the cap.
+ *   - Sort ties on `timestamp` (seconds granularity) resolve to insertion
+ *     order via the underlying backend's stable sort. Acceptable here — any
+ *     equally-old notification may be pruned.
+ *
+ * Works across all three backends (local_db / postgres / mongo) because it
+ * only composes existing getRecords + removeAllRecords primitives.
+ *
+ * @param {string} table - Table name (must exist in `tables` schema).
+ * @param {object} filter_obj - Mongo-style filter scoping the prune (e.g.
+ *     {user_uid: 'X'}). Required: never prune the whole table accidentally.
+ * @param {{by: string, order: 1|-1}} sort - Sort spec, same shape as getRecords.
+ *     Use {by: 'timestamp', order: -1} so newest come first and the tail is
+ *     pruned.
+ * @param {number} max_count - Retention cap. <=0 means unlimited.
+ * @returns {Promise<number>} Number of records deleted. 0 when no-op.
+ */
+exports.pruneTableToCount = async (table, filter_obj, sort, max_count) => {
+    if (!tables[table]) {
+        logger.error(`Refusing to prune unknown table '${table}'.`);
+        return 0;
+    }
+    if (!filter_obj || typeof filter_obj !== 'object' || Object.keys(filter_obj).length === 0) {
+        // Defensive: refuse to prune with an empty filter, which would match
+        // every row in the table and could delete unrelated records if the
+        // caller forgot to scope.
+        logger.error(`Refusing to prune '${table}' with empty filter (would match all rows).`);
+        return 0;
+    }
+    if (!Number.isFinite(Number(max_count)) || Number(max_count) <= 0) {
+        return 0;
+    }
+    const cap = Math.floor(Number(max_count));
+
+    const total = await exports.getRecords(table, filter_obj, true);
+    const HYSTERESIS_FACTOR = 1.2;
+    if (total <= Math.ceil(cap * HYSTERESIS_FACTOR)) return 0;
+
+    // Fetch matching records sorted (newest first), then take the tail to delete.
+    const all = await exports.getRecords(table, filter_obj, false, sort);
+    const to_delete = all.slice(cap);
+    if (to_delete.length === 0) return 0;
+
+    const primary_key = tables[table].primary_key || 'uid';
+    const ids_to_delete = to_delete.map(record => record[primary_key]).filter(v => v !== undefined && v !== null);
+    if (ids_to_delete.length === 0) return 0;
+
+    // Chunk the delete to avoid blowing past backend limits on huge backlogs
+    // (e.g. postgres placeholder ceiling ~65535, mongo large $in is slow).
+    // 1000/batch is a safe balance across local_db / mongo / postgres.
+    const CHUNK = 1000;
+    let deleted = 0;
+    for (let i = 0; i < ids_to_delete.length; i += CHUNK) {
+        const chunk = ids_to_delete.slice(i, i + CHUNK);
+        const ok = await exports.removeAllRecords(table, {[primary_key]: {$in: chunk}});
+        if (!ok) {
+            logger.error(`pruneTableToCount: removeAllRecords reported failure for ${table} at offset ${i} (${chunk.length} ids)`);
+        } else {
+            deleted += chunk.length;
+        }
+    }
+    return deleted;
+};
+
 exports.aggregateRecords = async (table, pipeline = []) => {
     if (!tables[table]) {
         logger.error(`Refusing to aggregate unknown table '${table}'.`);
@@ -1231,7 +1340,10 @@ exports.generateJSONTables = async (db_json, users_json) => {
     tables_obj.subscriptions = createSubscriptionsRecords(subscriptions);
     tables_obj.users = createUsersRecords(users);
     tables_obj.roles = createRolesRecords(users_json['roles']);
-    tables_obj.downloads = createDownloadsRecords(db_json['downloads'])
+    tables_obj.downloads = createDownloadsRecords(db_json['downloads']);
+    // Preserve notifications across the 4.2->4.3 migration. Previously dropped
+    // here, which silently wiped user notification history on container update.
+    tables_obj.notifications = db_json['notifications'] || [];
     
     return tables_obj;
 }
@@ -1612,49 +1724,86 @@ exports.bootstrapRemoteDBFromLocalIfNeeded = async () => {
           |            |
       filter_prop  filter_prop_value
 */
-exports.applyFilterLocalDB = (db_path, filter_obj, operation) => {
-    const filter_props = Object.keys(filter_obj);
-    const return_val = db_path[operation](record => {
-        if (!filter_props) return true;
-        let filtered = true;
-        for (let i = 0; i < filter_props.length; i++) {
-            const filter_prop = filter_props[i];
-            const filter_prop_value = filter_obj[filter_prop];
-            if (filter_prop_value === undefined || filter_prop_value === null) {
-                filtered &= record[filter_prop] === undefined || record[filter_prop] === null;
-            } else {
-                if (typeof filter_prop_value === 'object') {
-                    const record_value = filter_prop.includes('.')
-                        ? utils.searchObjectByString(record, filter_prop)
-                        : record[filter_prop];
-                    if ('$regex' in filter_prop_value) {
-                        filtered &= typeof record_value === 'string'
-                            && (record_value.search(new RegExp(filter_prop_value['$regex'], filter_prop_value['$options'])) !== -1);
-                    } else if ('$ne' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value !== filter_prop_value['$ne'];
-                    } else if ('$lt' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value < filter_prop_value['$lt'];
-                    } else if ('$gt' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value > filter_prop_value['$gt'];
-                    } else if ('$lte' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value <= filter_prop_value['$lte'];
-                    } else if ('$gte' in filter_prop_value) {
-                        filtered &= record_value !== undefined && record_value >= filter_prop_value['$gte'];
-                    } else if ('$in' in filter_prop_value) {
-                        filtered &= Array.isArray(filter_prop_value['$in']) && filter_prop_value['$in'].includes(record_value);
-                    }
-                } else {
-                    // handle case of nested property check
-                    if (filter_prop.includes('.'))
-                        filtered &= utils.searchObjectByString(record, filter_prop) === filter_prop_value;
-                    else
-                        filtered &= record[filter_prop] === filter_prop_value;
+/*
+    Pure-JS per-record matcher used by applyFilterLocalDB. Extracted so that
+    top-level logical operators ($and, $or, $nor) can recurse cleanly. Emulates
+    Mongo's query semantics for the operator set used across the codebase:
+    $regex, $ne, $lt, $gt, $lte, $gte, $in, $nin, $not, plus the logical
+    $and/$or/$nor containers. Missing fields normalize per-op (matching Mongo's
+    "missing == null" rule for these operators).
+*/
+function recordMatchesLocalFilter(record, filter_obj) {
+    const filter_props = filter_obj ? Object.keys(filter_obj) : null;
+    if (!filter_props || filter_props.length === 0) return true;
+    let filtered = true;
+    for (let i = 0; i < filter_props.length; i++) {
+        const filter_prop = filter_props[i];
+        const filter_prop_value = filter_obj[filter_prop];
+
+        // Top-level logical operators (Mongo): each is an array of sub-predicates.
+        if (filter_prop === '$and') {
+            filtered &= Array.isArray(filter_prop_value)
+                && filter_prop_value.every(pred => recordMatchesLocalFilter(record, pred));
+            continue;
+        }
+        if (filter_prop === '$or') {
+            filtered &= Array.isArray(filter_prop_value)
+                && filter_prop_value.some(pred => recordMatchesLocalFilter(record, pred));
+            continue;
+        }
+        if (filter_prop === '$nor') {
+            filtered &= Array.isArray(filter_prop_value)
+                && !filter_prop_value.some(pred => recordMatchesLocalFilter(record, pred));
+            continue;
+        }
+
+        if (filter_prop_value === undefined || filter_prop_value === null) {
+            filtered &= record[filter_prop] === undefined || record[filter_prop] === null;
+        } else {
+            if (typeof filter_prop_value === 'object') {
+                const record_value = filter_prop.includes('.')
+                    ? utils.searchObjectByString(record, filter_prop)
+                    : record[filter_prop];
+                // Normalize missing → null for the equality-style operators so
+                // local_db matches Mongo: $ne/$in/$nin treat missing == null.
+                // Range operators ($lt/$gt/$lte/$gte) keep "missing never matches"
+                // semantics, which is also Mongo-correct.
+                const eq_value = record_value === undefined ? null : record_value;
+                if ('$regex' in filter_prop_value) {
+                    filtered &= typeof record_value === 'string'
+                        && (record_value.search(new RegExp(filter_prop_value['$regex'], filter_prop_value['$options'])) !== -1);
+                } else if ('$ne' in filter_prop_value) {
+                    filtered &= eq_value !== (filter_prop_value['$ne'] === undefined ? null : filter_prop_value['$ne']);
+                } else if ('$nin' in filter_prop_value) {
+                    filtered &= Array.isArray(filter_prop_value['$nin']) && !filter_prop_value['$nin'].includes(eq_value);
+                } else if ('$not' in filter_prop_value) {
+                    // Mongo $not: negate the inner operator expression on the same field.
+                    filtered &= !recordMatchesLocalFilter(record, {[filter_prop]: filter_prop_value['$not']});
+                } else if ('$lt' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value < filter_prop_value['$lt'];
+                } else if ('$gt' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value > filter_prop_value['$gt'];
+                } else if ('$lte' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value <= filter_prop_value['$lte'];
+                } else if ('$gte' in filter_prop_value) {
+                    filtered &= record_value !== undefined && record_value >= filter_prop_value['$gte'];
+                } else if ('$in' in filter_prop_value) {
+                    filtered &= Array.isArray(filter_prop_value['$in']) && filter_prop_value['$in'].includes(eq_value);
                 }
+            } else {
+                // handle case of nested property check
+                if (filter_prop.includes('.'))
+                    filtered &= utils.searchObjectByString(record, filter_prop) === filter_prop_value;
+                else
+                    filtered &= record[filter_prop] === filter_prop_value;
             }
         }
-        return filtered;
-    });
-    return return_val;
+    }
+    return !!filtered;
+}
+
+exports.applyFilterLocalDB = (db_path, filter_obj, operation) => {
+    return db_path[operation](record => recordMatchesLocalFilter(record, filter_obj));
 }
 
 // should only be used for tests

@@ -298,12 +298,18 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     this.notification_count = new_count;
   }
 
-  notificationMenuOpened(): void {
-    this.notifications.getNotifications();
+  /**
+   * Returns the bell badge value. Above 9 unread, renders '9+' so the badge
+   * stays compact for users with many notifications. Otherwise returns the
+   * exact number (0–9). AppComponent stores raw `notification_count`; this
+   * formatter is bound in the template.
+   */
+  notificationBadgeValue(): string | number {
+    return this.notification_count > 9 ? '9+' : this.notification_count;
   }
 
-  notificationMenuClosed(): void {
-    this.notifications.setNotificationsToRead();
+  notificationMenuOpened(): void {
+    this.notifications.getNotifications();
   }
 
   activeDownloadsMenuButtonClicked(): void {

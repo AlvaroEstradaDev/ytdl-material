@@ -36,6 +36,7 @@
       "enable_notifications": true,
       "enable_all_notifications": true,
       "allowed_notification_types": [],
+      "notifications_retention_count": 500,
       "enable_rss_feed": false,
       "warn_on_duplicate": false
     },
@@ -109,7 +110,8 @@
       "mongodb_connection_string": "mongodb://127.0.0.1:27017/?compressors=zlib",
       "remote_db_type": "",
       "db_migrate": "",
-      "postgresdb_connection_string": ""
+      "postgresdb_connection_string": "",
+      "redis_connection_string": ""
     },
     "Advanced": {
       "default_downloader": "youtube-dl",
