@@ -25,3 +25,9 @@
 .notifications-list {
     display: block
 }
+
+.notifications-actions {
+    display: flex;
+    gap: 8px;
+    padding: 10px;
+}
