@@ -25,6 +25,11 @@ export class NotificationsComponent implements OnInit {
   // Emits the raw unread total; rendering layer formats it.
   @Output() notificationCount = new EventEmitter<number>();
 
+  // Emitted when the user clicks "View all notifications". AppComponent
+  // binds this to MatMenuTrigger.closeMenu() so the popup dismisses before
+  // the router navigates to /notifications.
+  @Output() viewAllClicked = new EventEmitter<void>();
+
   notificationFilters: { [key in NotificationType]: { key: string; label: string } } = {
     download_complete: { key: 'download_complete', label: $localize`Download completed` },
     download_error:    { key: 'download_error',    label: $localize`Download error` },
@@ -94,6 +99,22 @@ export class NotificationsComponent implements OnInit {
     });
   }
 
+  /**
+   * Mark every notification as read. Empty array means "all" (server
+   * contract; same call the full /notifications page makes). Optimistically
+   * drop the bell badge to 0 before the refetch round-trip — the popup
+   * owns the badge via `notificationCount`, unlike the full page. The
+   * refetch will also emit `unread_total` (still 0 post-mark); both emits
+   * agree, so no flicker.
+   */
+  markAllRead(): void {
+    this.postsService.setNotificationsToRead([]).subscribe(() => {
+      this.unread_total = 0;
+      this.notificationCount.emit(0);
+      this.getNotifications();
+    });
+  }
+
   filterNotifications(): void {
     // Re-fetch with the new type filter applied server-side.
     this.getNotifications();
@@ -105,6 +126,7 @@ export class NotificationsComponent implements OnInit {
   }
 
   viewAll(): void {
+    this.viewAllClicked.emit();
     this.router.navigate(['/notifications']);
   }
 
