@@ -31,3 +31,8 @@
     gap: 8px;
     padding: 10px;
 }
+
+.notifications-actions button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
