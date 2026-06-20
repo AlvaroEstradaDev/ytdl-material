@@ -50,6 +50,7 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('sidenav') sidenav: MatSidenav;
   @ViewChild('notifications') notifications: NotificationsComponent;
   @ViewChild('activeDownloadsTrigger') activeDownloadsTrigger: MatMenuTrigger;
+  @ViewChild('notificationsTrigger') notificationsTrigger: MatMenuTrigger;
   @ViewChild('hamburgerMenu', { read: ElementRef }) hamburgerMenuButton: ElementRef;
   navigator: string = null;
 
