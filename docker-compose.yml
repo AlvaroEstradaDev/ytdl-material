@@ -7,7 +7,6 @@ services:
       ytdl_use_local_db: 'false'
       ytdl_remote_db_type: 'postgres'
       ytdl_postgresdb_connection_string: 'postgresql://PlaceholderUser:PlaceholderPassword@ytdl-postgres-db:5432/PlaceholderDB'
-      write_ytdl_config: 'true'
     depends_on:
       ytdl-postgres-db:
         condition: service_healthy

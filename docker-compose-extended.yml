@@ -13,7 +13,6 @@ services:
       # ytdl_mongodb_connection_string: 'mongodb://ytdl-mongo-db:27017'
       # Optional one-time DB-to-DB migration on startup:
       # ytdl_db_migrate: 'postgres'
-      write_ytdl_config: 'true'
 
       # Optional yt-dlp browser impersonation support.
       # Set true to install and show it; otherwise normal yt-dlp behavior is unchanged.

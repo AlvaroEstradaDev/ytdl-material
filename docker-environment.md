@@ -10,7 +10,6 @@ Docker examples here use lowercase environment variable names consistently.
 
 These apply to many Docker setups regardless of which database or login method you choose:
 
-* `write_ytdl_config`: set to `'true'` to write env-backed settings into `appdata/default.json` on startup
 * `ytdl_uid` / `ytdl_gid`: app user/group IDs used inside the container
 * `ytdl_log_level`: backend log level (`error`, `warn`, `info`, `verbose`, `debug`), default `info`
 * `ytdl_umask`: set the process umask before startup (for example `'022'`)
@@ -40,7 +39,6 @@ environment:
   ytdl_use_local_db: 'false'
   ytdl_remote_db_type: 'postgres'
   ytdl_postgresdb_connection_string: 'postgresql://PlaceholderUser:PlaceholderPassword@ytdl-postgres-db:5432/PlaceholderDB'
-  write_ytdl_config: 'true'
 ```
 
 ### MongoDB
@@ -54,7 +52,6 @@ environment:
   ytdl_use_local_db: 'false'
   ytdl_remote_db_type: 'mongo'
   ytdl_mongodb_connection_string: 'mongodb://ytdl-mongo-db:27017'
-  write_ytdl_config: 'true'
 ```
 
 ### Database Migration
@@ -75,7 +72,7 @@ Redis is optional. It is only used for shared Express rate-limiter state.
 
 If `ytdl_redis_connection_string` is configured, ytdl-material will attempt to use Redis during startup. If Redis is unreachable or the connection string is invalid, the backend logs a warning, continues with the default in-memory limiter store, and keeps retrying the Redis connection in the background until Redis becomes available.
 
-When using env-managed Docker setups with `write_ytdl_config='true'`, you can clear a previously written Redis connection string by setting `ytdl_redis_connection_string=''` for one startup, then removing the line entirely afterward.
+Env-backed settings are always written into `appdata/default.json` on startup. To clear a previously written Redis connection string, set `ytdl_redis_connection_string=''` for one startup, then remove the line entirely afterward.
 
 ## Public API Variables
 
