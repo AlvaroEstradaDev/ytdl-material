@@ -9,6 +9,16 @@ RUN sh ./ffmpeg-fetch.sh && \
     test -x /usr/local/bin/ffprobe
 RUN sh ./fetch-twitchdownloader.sh
 
+# mongodump for native MongoDB backup support (skipped gracefully via ENOENT if absent)
+RUN case "$(uname -m)" in \
+        x86_64) A=x86_64 ;; \
+        *) echo "mongotools: skipping unsupported arch" && exit 0 ;; \
+    esac && \
+    curl -fsSL "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2204-${A}-100.17.0.tgz" \
+        | tar xz -C /tmp && \
+    cp /tmp/mongodb-database-tools-*/bin/mongodump /usr/local/bin/ && \
+    rm -rf /tmp/mongodb-database-tools-*
+
 
 # Base runtime image with Node.js 24 (installed via nvm for multi-arch compatibility)
 FROM ubuntu:26.04 AS base
@@ -82,7 +92,7 @@ RUN npm config set strict-ssl false && \
 FROM base
 RUN npm install -g pm2 && \
     apt update && \
-    apt install -y --no-install-recommends gosu python3-minimal python-is-python3 python3-pip atomicparsley build-essential unzip && \
+    apt install -y --no-install-recommends gosu python3-minimal python-is-python3 python3-pip atomicparsley build-essential unzip postgresql-client && \
     pip install --break-system-packages pycryptodomex && \
     apt remove -y --purge build-essential && \
     apt autoremove -y --purge && \
@@ -100,6 +110,8 @@ WORKDIR /app
 COPY --chown=$UID:$GID --from=utils [ "/usr/local/bin/ffmpeg", "/usr/local/bin/ffmpeg" ]
 COPY --chown=$UID:$GID --from=utils [ "/usr/local/bin/ffprobe", "/usr/local/bin/ffprobe" ]
 COPY --chown=$UID:$GID --from=utils [ "/usr/local/bin/TwitchDownloaderCLI", "/usr/local/bin/TwitchDownloaderCLI"]
+RUN --mount=type=bind,from=utils,target=/mnt/utils \
+    [ ! -f /mnt/utils/usr/local/bin/mongodump ] || cp /mnt/utils/usr/local/bin/mongodump /usr/local/bin/mongodump
 COPY --chown=$UID:$GID [ "Public API v1.yaml", "/app/Public API v1.yaml" ]
 COPY --chown=$UID:$GID --from=backend ["/app/","/app/"]
 COPY --chown=$UID:$GID --from=frontend [ "/build/backend/public/", "/app/public/" ]
