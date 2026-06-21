@@ -221,6 +221,42 @@ function writeBackupSnapshot(table_to_records = {}, backup_prefix = null) {
     return { backup_file_name, path_to_backup };
 }
 
+function writeNativeDump() {
+    const { execFileSync } = require('child_process');
+    const db_type = getActiveDBType();
+    if (db_type === DB_TYPES.local) return null;
+
+    const native_dir = path.join('appdata', 'db_backup', 'native');
+    fs.ensureDirSync(native_dir);
+    const ts = Date.now() / 1000;
+
+    try {
+        if (db_type === DB_TYPES.mongo) {
+            const uri = config_api.getConfigItem('ytdl_mongodb_connection_string');
+            const file = path.join(native_dir, `mongo_dump_${ts}.archive.gz`);
+            execFileSync('mongodump', ['--uri', uri, '--archive', file, '--gzip'], { timeout: 120000 });
+            logger.info(`Native MongoDB dump written to ${file}`);
+            return file;
+        }
+        if (db_type === DB_TYPES.postgres) {
+            const connStr = config_api.getConfigItem('ytdl_postgresdb_connection_string');
+            const file = path.join(native_dir, `postgres_dump_${ts}.dump`);
+            execFileSync('pg_dump', ['--dbname', connStr, '--format=custom', '--file', file], { timeout: 120000 });
+            logger.info(`Native PostgreSQL dump written to ${file}`);
+            return file;
+        }
+    } catch (e) {
+        const tool = db_type === DB_TYPES.mongo ? 'mongodump' : 'pg_dump';
+        if (e.code === 'ENOENT') {
+            logger.warn(`Native ${db_type} dump skipped: ${tool} not installed. JSON snapshot remains as backup.`);
+        } else {
+            logger.error(`Native ${db_type} dump failed: ${e.message}`);
+        }
+        return null;
+    }
+    return null;
+}
+
 const BLOCKED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function isPlainObject(value) {
@@ -1434,6 +1470,7 @@ exports.backupDB = async () => {
 
     const { backup_file_name, path_to_backup } = writeBackupSnapshot(table_to_records);
     logger.info(`Backing up ${using_local_db ? 'local' : 'remote'} DB to ${path_to_backup}`);
+    writeNativeDump();
     return backup_file_name;
 }
 
