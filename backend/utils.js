@@ -8,6 +8,7 @@ const winston = require('winston');
 
 const config_api = require('./config');
 const logger = require('./logger');
+const transcoding_api = require('./transcoding');
 const CONSTS = require('./consts');
 
 const is_windows = process.platform === 'win32';
@@ -460,7 +461,52 @@ exports.createEdgeNGrams = (str) => {
 
 // ffmpeg helper functions
 
+function describeCropProcessing(hardware_settings) {
+    if (!hardware_settings) return 'software encoding';
+    const decode_label = hardware_settings.hardware_decode ? 'hardware decoding' : 'software decoding';
+    return `${hardware_settings.label} (${hardware_settings.video_encoder}) with ${decode_label}`;
+}
+
 exports.cropFile = async (file_path, start, end, ext) => {
+    const start_time = Date.now();
+
+    // Degrade one step at a time rather than straight to software. A GPU that cannot decode
+    // a particular source can usually still encode it, so a failed hardware decode should
+    // cost the hardware encode too only if that fails as well.
+    const attempts = [];
+    const full_settings = transcoding_api.getHardwareFfmpegSettings(ext);
+    if (full_settings) {
+        attempts.push(full_settings);
+        if (full_settings.hardware_decode) {
+            attempts.push(transcoding_api.getHardwareFfmpegSettings(ext, {allow_hardware_decode: false}));
+        }
+    }
+    attempts.push(null);
+
+    // Cropping re-encodes and can run for minutes with no other output, so announce it up
+    // front. Without this a long crop is indistinguishable from a hung download.
+    logger.info(`Cropping '${file_path}' using ${describeCropProcessing(attempts[0])}. This can take a while for large files.`);
+
+    let crop_success = false;
+    for (let i = 0; i < attempts.length; i++) {
+        crop_success = await cropFileAttempt(file_path, start, end, ext, attempts[i]);
+        if (crop_success) {
+            if (i > 0) logger.info(`Cropping for '${file_path}' succeeded using ${describeCropProcessing(attempts[i])}.`);
+            break;
+        }
+        if (i + 1 < attempts.length) {
+            logger.warn(`Crop using ${describeCropProcessing(attempts[i])} failed for '${file_path}'. Retrying with ${describeCropProcessing(attempts[i + 1])}.`);
+        }
+    }
+
+    const elapsed_seconds = ((Date.now() - start_time) / 1000).toFixed(1);
+    if (crop_success) logger.info(`Cropping for '${file_path}' complete in ${elapsed_seconds}s.`);
+    else logger.error(`Cropping for '${file_path}' failed after ${elapsed_seconds}s.`);
+
+    return crop_success;
+}
+
+function cropFileAttempt(file_path, start, end, ext, hardware_settings) {
     return new Promise(resolve => {
         const temp_file_path = `${file_path}.cropped${ext}`;
         let base_ffmpeg_call = ffmpeg(file_path);
@@ -470,9 +516,22 @@ exports.cropFile = async (file_path, start, end, ext) => {
         if (end) {
             base_ffmpeg_call = base_ffmpeg_call.duration(end - start);
         }
+        if (hardware_settings) {
+            if (hardware_settings.input_options.length > 0) {
+                base_ffmpeg_call = base_ffmpeg_call.inputOptions(hardware_settings.input_options);
+            }
+            if (hardware_settings.video_filters.length > 0) {
+                base_ffmpeg_call = base_ffmpeg_call.videoFilters(hardware_settings.video_filters);
+            }
+            base_ffmpeg_call = base_ffmpeg_call.videoCodec(hardware_settings.video_encoder);
+        }
         base_ffmpeg_call
+            // the resolved command line is the only definitive record of which encoder ran
+            .on('start', (command_line) => {
+                logger.debug(`ffmpeg crop command: ${command_line}`);
+            })
             .on('end', () => {
-                logger.verbose(`Cropping for '${file_path}' complete.`);
+                logger.verbose(`Cropping attempt for '${file_path}' finished.`);
                 fs.unlinkSync(file_path);
                 fs.moveSync(temp_file_path, file_path);
                 resolve(true);
@@ -480,6 +539,11 @@ exports.cropFile = async (file_path, start, end, ext) => {
             .on('error', (err) => {
                 logger.error(`Failed to crop ${file_path}.`);
                 logger.error(err);
+                try {
+                    fs.removeSync(temp_file_path);
+                } catch (e) {
+                    // Non-fatal.
+                }
                 resolve(false);
             }).save(temp_file_path);
     });
