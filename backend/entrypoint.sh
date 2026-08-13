@@ -80,9 +80,64 @@ install_ytdlp_impersonation_dependencies() {
     export PYTHONPATH="${target_path}${PYTHONPATH:+:${PYTHONPATH}}"
 }
 
+resolve_transcoding_mode() {
+    local env_mode
+    local env_name
+
+    for env_name in ytdl_transcoding YTDL_TRANSCODING; do
+        if printenv "$env_name" >/dev/null 2>&1; then
+            env_mode="$(printenv "$env_name")"
+            printf '%s' "$env_mode" | tr '[:upper:]' '[:lower:]' | \
+                sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+            return
+        fi
+    done
+
+    if [ ! -r appdata/default.json ]; then
+        return
+    fi
+
+    python3 -I - <<'PY'
+import json
+import sys
+try:
+    with open('appdata/default.json', encoding='utf-8') as config_file:
+        config = json.load(config_file)
+    if 'YtdlMaterial' in config:
+        root = config.get('YtdlMaterial') or {}
+    else:
+        root = config.get('YoutubeDLMaterial') or {}
+    mode = root.get('Downloader', {}).get('transcoding')
+    if mode is not None:
+        sys.stdout.write(str(mode).strip().lower())
+except (AttributeError, OSError, TypeError, ValueError):
+    # The backend will report malformed config with its normal startup diagnostics.
+    pass
+PY
+}
+
+package_is_installed() {
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed'
+}
+
+transcoding_runtime_is_installed() {
+    local transcoding_mode="$1"
+
+    package_is_installed libva-drm2 || return 1
+
+    case "$transcoding_mode" in
+        qsv|intel|quicksync)
+            ls /usr/lib/*/dri/iHD_drv_video.so >/dev/null 2>&1 || return 1
+            package_is_installed libmfx-gen1.2 || return 1
+            ;;
+        *)
+            ls /usr/lib/*/dri/*_drv_video.so >/dev/null 2>&1 || return 1
+            ;;
+    esac
+}
+
 install_transcoding_drivers() {
-    local transcoding_mode
-    transcoding_mode="$(resolve_runtime_env "" ytdl_transcoding YTDL_TRANSCODING | tr '[:upper:]' '[:lower:]')"
+    local transcoding_mode="$1"
 
     # Only VAAPI/QSV need userspace drivers inside the container.
     # NVENC (libcuda) and AMF (libamfrt) runtimes come from the host via the container runtime.
@@ -94,8 +149,9 @@ install_transcoding_drivers() {
             ;;
     esac
 
-    # Skip if a VA driver is already present (from a previous start or a derived image)
-    if ls /usr/lib/*/dri/*_drv_video.so >/dev/null 2>&1; then
+    # Skip only when the complete mode-specific runtime is present from a previous
+    # start or a derived image. A VA driver alone cannot open /dev/dri devices.
+    if transcoding_runtime_is_installed "$transcoding_mode"; then
         echo "[entrypoint] VAAPI/QSV userspace drivers are already installed"
         return
     fi
@@ -111,6 +167,7 @@ install_transcoding_drivers() {
         echo "[entrypoint] WARNING: apt-get update failed; hardware acceleration drivers were not installed."
         return
     fi
+    apt-get install -y --no-install-recommends libva-drm2 || echo "[entrypoint] WARNING: libva-drm2 could not be installed"
     apt-get install -y --no-install-recommends mesa-va-drivers || echo "[entrypoint] WARNING: mesa-va-drivers could not be installed"
     apt-get install -y --no-install-recommends intel-media-va-driver-non-free || \
         apt-get install -y --no-install-recommends intel-media-va-driver || \
@@ -123,17 +180,63 @@ install_transcoding_drivers() {
     rm -rf /var/lib/apt/lists/*
 }
 
+resolve_runtime_home() {
+    local passwd_name
+    local passwd_uid
+    local passwd_home
+
+    while IFS=: read -r passwd_name _ passwd_uid _ _ passwd_home _; do
+        if [ "$passwd_name" = "$1" ] || [ "$passwd_uid" = "$1" ]; then
+            printf '%s' "${passwd_home:-/}"
+            return
+        fi
+    done < /etc/passwd
+
+    printf '/'
+}
+
+has_supplementary_groups() {
+    local primary_gid
+    local group_gid
+    local group_ids
+
+    primary_gid="$(id -g)"
+    group_ids="$(id -G 2>/dev/null || true)"
+    for group_gid in $group_ids; do
+        if [ "$group_gid" != "$primary_gid" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 runtime_uid="$(resolve_runtime_env 1000 ytdl_uid uid UID)"
 runtime_gid="$(resolve_runtime_env 1000 ytdl_gid gid GID)"
+transcoding_mode="$(resolve_transcoding_mode)"
 
 install_ytdlp_impersonation_dependencies
-install_transcoding_drivers
+install_transcoding_drivers "$transcoding_mode"
 
 # Check if we're running as root
 if [ "$(id -u)" = "0" ]; then
     # Running as root - fix permissions and drop privileges
     echo "[entrypoint] Running as root, fixing permissions (this may take a while)"
     find . \! -user "$runtime_uid" -exec chown "$runtime_uid:$runtime_gid" '{}' + || echo "WARNING! Could not change directory ownership. If you manage permissions externally this is fine, otherwise you may experience issues when downloading or deleting videos."
+    case "$transcoding_mode" in
+        vaapi|qsv|intel|quicksync)
+            if has_supplementary_groups; then
+                # Docker's group_add values exist in the process' supplementary group
+                # list, not necessarily in /etc/group. Preserve that kernel-level list
+                # for DRI access while matching gosu's HOME resolution behavior.
+                HOME="$(resolve_runtime_home "$runtime_uid")"
+                export HOME
+                exec setpriv --reuid "$runtime_uid" --regid "$runtime_gid" --keep-groups -- "$@"
+            fi
+            ;;
+    esac
+
+    # Keep the established privilege-drop behavior outside the DRI group_add case.
     exec gosu "$runtime_uid:$runtime_gid" "$@"
 else
     # Already running as non-root user
