@@ -4,6 +4,9 @@ const { promisify } = require('util');
 const http = require('http');
 const https = require('https');
 const auth_api = require('./authentication/auth');
+const { requireAdmin, requirePermission, requireAuthenticated, requireAuthenticatedOrShared } = require('./authentication/permissions');
+const { optionalJwt, resolveJwtIfPresent, requireJwtForTokenManagement } = require('./authentication/optional-jwt');
+const api_tokens_api = require('./authentication/api-tokens');
 const oidc_api = require('./authentication/oidc');
 const path = require('path');
 const compression = require('compression');
@@ -11,10 +14,11 @@ const multer  = require('multer');
 const express = require("express");
 const rateLimit = require('express-rate-limit');
 const bodyParser = require("body-parser");
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 const unzipper = require('unzipper');
 const db_api = require('./db');
 const { DelegatingRateLimitStore } = require('./rate-limit-store');
+const { skipApiRateLimit, skipAuthRateLimit } = require('./rate-limit-paths');
 const redis_store = require('./redis-store');
 const utils = require('./utils')
 const low = require('./lowdb-compat')
@@ -129,8 +133,6 @@ if (umask !== undefined) process.umask(umask);
 
 // check if debug mode
 let debugMode = process.env.YTDL_MODE === 'debug';
-
-const admin_token = '4241b401-7236-493e-92b5-b72696b9d853';
 
 // logging setup
 
@@ -610,8 +612,8 @@ async function backupServerLite() {
     let output = fs.createWriteStream(path.join(__dirname, output_path));
 
     await new Promise(resolve => {
-        var archive = archiver('zip', {
-            gzip: true,
+        // archiver 8 exports classes rather than a callable factory; the old form threw.
+        var archive = new ZipArchive({
             zlib: { level: 9 } // Sets the compression level.
         });
 
@@ -919,18 +921,12 @@ function loadConfigValues() {
 
 function initializeDocumentationAPI() {
     const docs_enabled = !!config_api.getConfigItem('ytdl_enable_documentation_api');
-    const public_api_enabled = !!config_api.getConfigItem('ytdl_use_api_key');
 
     documentation_api_enabled = false;
     documentation_api_handler = null;
     openapi_spec_path = null;
 
     if (!docs_enabled) return;
-
-    if (!public_api_enabled) {
-        logger.warn('Documentation API is enabled in config but Public API is disabled. Skipping docs startup.');
-        return;
-    }
 
     openapi_spec_path = OPENAPI_SPEC_PATH_CANDIDATES.find(spec_path => fs.existsSync(spec_path)) || null;
     if (!openapi_spec_path) {
@@ -1016,38 +1012,12 @@ async function startYoutubeDL() {
 }
 
 app.use(function(req, res, next) {
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Api-Token");
     res.header("Access-Control-Allow-Origin", getOrigin());
     if (req.method === 'OPTIONS') {
         res.sendStatus(200);
     } else {
         next();
-    }
-});
-
-function isPublicApiPath(requestPath = '') {
-    return requestPath.includes('/api/stream')
-        || requestPath.includes('/api/thumbnail/')
-        || requestPath.includes('/api/rss')
-        || requestPath.includes('/api/telegramRequest');
-}
-
-app.use(function(req, res, next) {
-    if (!req.path.includes('/api/')) {
-        next();
-    } else if (req.path.includes('/api/auth/oidc/login') ||
-               req.path.includes('/api/auth/oidc/callback') ||
-               req.path.includes('/api/auth/oidc/status')) {
-        next();
-    } else if (req.query.apiKey === admin_token) {
-        next();
-    } else if (req.query.apiKey && config_api.getConfigItem('ytdl_use_api_key') && req.query.apiKey === config_api.getConfigItem('ytdl_api_key')) {
-        next();
-    } else if (isPublicApiPath(req.path)) {
-        next();
-    } else {
-        logger.verbose(`Rejecting request - invalid API use for endpoint: ${req.path}. API key present: ${!!req.query.apiKey}`);
-        req.socket.end();
     }
 });
 
@@ -1057,33 +1027,6 @@ const rateLimitValidateOptions = {
     xForwardedForHeader: false
 };
 
-function getRateLimitRequestPath(req) {
-    if (req.originalUrl) return req.originalUrl;
-    const baseUrl = req.baseUrl || '';
-    const requestPath = req.path || req.url || '';
-    return `${baseUrl}${requestPath}`;
-}
-
-function isPublicApiRateLimitExemptPath(requestPath) {
-    return isPublicApiPath(requestPath);
-}
-
-function skipAuthRateLimit(req) {
-    const requestPath = getRateLimitRequestPath(req);
-    return requestPath.includes('/api/auth/jwtAuth')
-        || requestPath.includes('/api/auth/adminExists');
-}
-
-function skipApiRateLimit(req) {
-    const requestPath = getRateLimitRequestPath(req);
-    return isPublicApiRateLimitExemptPath(requestPath)
-        || requestPath.includes('/api/auth/jwtAuth')
-        || requestPath.includes('/api/auth/adminExists')
-        || requestPath.includes('/api/get')
-        || requestPath.includes('/api/versionInfo')
-        || requestPath.includes('/api/updaterStatus')
-        || requestPath.includes('/api/checkConcurrentStream');
-}
 
 const testCookiesRateLimitStore = new DelegatingRateLimitStore('ytdl:rate-limit:test-cookies:');
 const apiRateLimitStore = new DelegatingRateLimitStore('ytdl:rate-limit:api:');
@@ -1219,44 +1162,29 @@ async function initializeRateLimiters() {
 app.use('/api', apiRateLimiter);
 app.use('/api/auth', authRateLimiter);
 
-function isPublicAuthPath(req_path) {
-    return req_path.includes('/api/auth/register')
-        || req_path.includes('/api/auth/oidc/login')
-        || req_path.includes('/api/auth/oidc/callback')
-        || req_path.includes('/api/auth/oidc/status');
-}
+// Reachable before login on purpose: the frontend cannot render a login page without
+// knowing the auth method, whether registration is open, and the theme. It cannot use
+// optionalJwt for that reason -- an anonymous caller has to get a smaller answer rather
+// than a 401 -- so entitlement is resolved here instead, and everyone else gets the file
+// with the integration secrets removed.
+app.get('/api/config', async function(req, res) {
+    const multi_user_mode = !!config_api.getConfigItem('ytdl_multi_user_mode');
+    const caller = multi_user_mode ? await auth_api.getUserFromJWT(req.query.jwt) : null;
 
-const optionalJwt = async function (req, res, next) {
-    const multiUserMode = config_api.getConfigItem('ytdl_multi_user_mode');
-    if (multiUserMode && ((req.body && req.body.uuid) || (req.query && req.query.uuid)) && (req.path.includes('/api/getFile') ||
-                                                                                            req.path.includes('/api/stream') ||
-                                                                                            req.path.includes('/api/getPlaylist') ||
-                                                                                            req.path.includes('/api/downloadFileFromServer'))) {
-        // check if shared video
-        const using_body = req.body && req.body.uuid;
-        const uuid = using_body ? req.body.uuid : req.query.uuid;
-        const uid = using_body ? req.body.uid : req.query.uid;
-        const playlist_id = using_body ? req.body.playlist_id : req.query.playlist_id;
-        const file = !playlist_id ? await auth_api.getUserVideo(uuid, uid, true) : await files_api.getPlaylist(playlist_id, uuid, true);
-        if (file) {
-            req.can_watch = true;
-            return next();
-        } else {
-            res.sendStatus(401);
-            return;
-        }
-    } else if (multiUserMode && !isPublicAuthPath(req.path)) {
-        if (!req.query.jwt) {
-            res.sendStatus(401);
-            return;
-        }
-        return auth_api.passport.authenticate('jwt', { session: false })(req, res, next);
+    let config_file;
+    if (!multi_user_mode) {
+        // No accounts exist, so there is nobody to withhold anything from.
+        config_file = config_api.getConfigFile();
+    } else if (!caller) {
+        config_file = config_api.getAnonymousConfigFile();
+    } else if (caller.role === 'admin') {
+        // Admin rather than the 'settings' permission: /api/setConfig is admin-only, so a
+        // delegated user cannot save these anyway -- there is no reason to show them every
+        // integration credential on the way to a page they cannot submit.
+        config_file = config_api.getConfigFile();
+    } else {
+        config_file = config_api.getRedactedConfigFile();
     }
-    return next();
-};
-
-app.get('/api/config', function(req, res) {
-    let config_file = config_api.getConfigFile();
     res.send({
         config_file: config_file,
         ytdlp_impersonation_available: config_api.isYtDlpImpersonationDependencyEnvEnabled(),
@@ -1265,7 +1193,7 @@ app.get('/api/config', function(req, res) {
     });
 });
 
-app.post('/api/setConfig', optionalJwt, function(req, res) {
+app.post('/api/setConfig', optionalJwt, requireAdmin, function(req, res) {
     let new_config_file = normalizeConfigRoot(req.body.new_config_file);
     if (new_config_file && new_config_file[CONFIG_ROOT_KEY]) {
         let success = config_api.setConfigFile(new_config_file);
@@ -1305,18 +1233,18 @@ app.use('/docs', docsRateLimiter, (req, res, next) => {
     documentation_api_handler(req, res, next);
 });
 
-app.post('/api/restartServer', optionalJwt, (req, res) => {
+app.post('/api/restartServer', optionalJwt, requireAdmin, (req, res) => {
     // delayed by a little bit so that the client gets a response
     setTimeout(() => {utils.restartServer()}, 100);
     res.send({success: true});
 });
 
-app.get('/api/getDBInfo', optionalJwt, async (req, res) => {
+app.get('/api/getDBInfo', optionalJwt, requireAdmin, async (req, res) => {
     const db_info = await db_api.getDBStats();
     res.send(db_info);
 });
 
-app.post('/api/transferDB', optionalJwt, async (req, res) => {
+app.post('/api/transferDB', optionalJwt, requireAdmin, async (req, res) => {
     const local_to_remote = req.body.local_to_remote;
     let success = null;
     let error = '';
@@ -1335,7 +1263,7 @@ app.post('/api/transferDB', optionalJwt, async (req, res) => {
     res.send({success: success, error: error});
 });
 
-app.post('/api/testConnectionString', optionalJwt, async (req, res) => {
+app.post('/api/testConnectionString', optionalJwt, requireAdmin, async (req, res) => {
     const connection_string = req.body.connection_string;
     let success = null;
     let error = '';
@@ -1351,7 +1279,44 @@ app.post('/api/testConnectionString', optionalJwt, async (req, res) => {
     res.send({success: success, error: error});
 });
 
-app.post('/api/downloadFile', optionalJwt, async function(req, res) {
+/*************************************************
+ * customArgs, additionalArgs and customOutput are
+ * the advanced download feature. The permission
+ * that names it was only ever checked on the dialog
+ * that previews the arguments, not on the endpoints
+ * that hand them to the downloader -- so it has to
+ * be checked wherever they are accepted.
+ *
+ * The argument content is then checked regardless
+ * of the answer: holding advanced_download is not
+ * meant to include running commands as the server.
+ ************************************************/
+async function refuseUnsafeDownloadOptions(req, options, url = undefined) {
+    if (utils.hasAdvancedDownloadOptions(options) && config_api.getConfigItem('ytdl_multi_user_mode')) {
+        if (!req.user) return {status: 401, error: 'Authentication required'};
+        if (!await auth_api.userHasPermission(req.user.uid, 'advanced_download')) {
+            return {status: 403, error: 'Missing the \'advanced_download\' permission'};
+        }
+    }
+
+    for (const field of ['customArgs', 'additionalArgs']) {
+        const disallowed_args = utils.findDisallowedDownloadArgs(options[field]);
+        if (disallowed_args.length) {
+            logger.error(`Refusing a download: ${field} contained ${disallowed_args.join(', ')}.`);
+            return {status: 400, error: `These arguments are not allowed: ${disallowed_args.join(', ')}`};
+        }
+    }
+
+    // Rejected here as well as at the downloader, so the caller is told why rather than
+    // watching a download quietly fail to appear.
+    if (url !== undefined && !utils.isAllowedDownloadURL(url)) {
+        return {status: 400, error: 'Only http and https URLs can be downloaded'};
+    }
+
+    return null;
+}
+
+app.post('/api/downloadFile', optionalJwt, requireAuthenticated, async function(req, res) {
     req.setTimeout(0); // remove timeout in case of long videos
     const url = req.body.url;
     const type = req.body.type ? req.body.type : 'video';
@@ -1375,6 +1340,12 @@ app.post('/api/downloadFile', optionalJwt, async function(req, res) {
         channelSearchPlaylist: !!req.body.channelSearchPlaylist
     };
 
+    const refusal = await refuseUnsafeDownloadOptions(req, options, url);
+    if (refusal) {
+        res.status(refusal.status).send({success: false, error: refusal.error});
+        return;
+    }
+
     const downloads = await downloader_api.createDownloads(url, type, options, user_uid);
 
     if (downloads && downloads.length > 0) {
@@ -1384,18 +1355,18 @@ app.post('/api/downloadFile', optionalJwt, async function(req, res) {
     }
 });
 
-app.post('/api/killAllDownloads', optionalJwt, async function(req, res) {
+app.post('/api/killAllDownloads', optionalJwt, requireAdmin, async function(req, res) {
     const result_obj = await killAllDownloads();
     res.send(result_obj);
 });
 
-app.post('/api/deleteOrphanFiles', optionalJwt, async function(req, res) {
+app.post('/api/deleteOrphanFiles', optionalJwt, requireAdmin, async function(req, res) {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const result = await files_api.deleteOrphanFiles(user_uid);
     res.send(result);
 });
 
-app.post('/api/generateArgs', optionalJwt, async function(req, res) {
+app.post('/api/generateArgs', optionalJwt, requirePermission('advanced_download'), async function(req, res) {
     const url = req.body.url;
     const type = req.body.type;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
@@ -1416,12 +1387,24 @@ app.post('/api/generateArgs', optionalJwt, async function(req, res) {
         disableSponsorBlock: req.body.disableSponsorBlock
     };
 
-    const args = await downloader_api.generateArgs(url, type, options, user_uid, true);
+    const refusal = await refuseUnsafeDownloadOptions(req, options, url);
+    if (refusal) {
+        res.status(refusal.status).send({success: false, error: refusal.error});
+        return;
+    }
+
+    // The preview is generated without the administrator's global arguments unless the
+    // caller is one: advanced_download is delegable, and those arguments are a secret the
+    // settings page already withholds from everybody else.
+    const caller_may_see_global_args = !config_api.getConfigItem('ytdl_multi_user_mode')
+        || (req.isAuthenticated() && !!req.user && req.user.role === 'admin');
+
+    const args = await downloader_api.generateArgs(url, type, options, user_uid, true, caller_may_see_global_args);
     res.send({args: args});
 });
 
 // gets all download mp3s
-app.get('/api/getMp3s', optionalJwt, async function(req, res) {
+app.get('/api/getMp3s', optionalJwt, requireAuthenticated, async function(req, res) {
     // TODO: simplify
     let mp3s = await db_api.getRecords('files', {isAudio: true});
     let playlists = await db_api.getRecords('playlists');
@@ -1442,7 +1425,7 @@ app.get('/api/getMp3s', optionalJwt, async function(req, res) {
 });
 
 // gets all download mp4s
-app.get('/api/getMp4s', optionalJwt, async function(req, res) {
+app.get('/api/getMp4s', optionalJwt, requireAuthenticated, async function(req, res) {
     let mp4s = await db_api.getRecords('files', {isAudio: false});
     let playlists = await db_api.getRecords('playlists');
 
@@ -1462,7 +1445,7 @@ app.get('/api/getMp4s', optionalJwt, async function(req, res) {
     });
 });
 
-app.post('/api/getFile', optionalJwt, async function (req, res) {
+app.post('/api/getFile', optionalJwt, requireAuthenticatedOrShared, async function (req, res) {
     const uid = req.body.uid;
     const uuid = req.body.uuid;
     let file = null;
@@ -1490,7 +1473,7 @@ app.post('/api/getFile', optionalJwt, async function (req, res) {
     }
 });
 
-app.post('/api/getAllFiles', optionalJwt, async function (req, res) {
+app.post('/api/getAllFiles', optionalJwt, requireAuthenticated, async function (req, res) {
     // these are returned
     const sort = req.body.sort;
     const range = req.body.range;
@@ -1511,13 +1494,13 @@ app.post('/api/getAllFiles', optionalJwt, async function (req, res) {
     });
 });
 
-app.post('/api/getDuplicateSummary', optionalJwt, async function (req, res) {
+app.post('/api/getDuplicateSummary', optionalJwt, requirePermission('filemanager'), async function (req, res) {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const summary = await files_api.getDuplicateSummary(user_uid);
     res.send(summary);
 });
 
-app.post('/api/getDuplicates', optionalJwt, async function (req, res) {
+app.post('/api/getDuplicates', optionalJwt, requirePermission('filemanager'), async function (req, res) {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const duplicates = await files_api.getDuplicateGroups(user_uid);
     res.send({
@@ -1525,14 +1508,14 @@ app.post('/api/getDuplicates', optionalJwt, async function (req, res) {
     });
 });
 
-app.post('/api/removeNewestDuplicates', optionalJwt, async function (req, res) {
+app.post('/api/removeNewestDuplicates', optionalJwt, requirePermission('filemanager'), async function (req, res) {
     const duplicate_key = req.body.duplicate_key;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const result = await files_api.removeNewestDuplicates(duplicate_key, user_uid);
     res.send(result);
 });
 
-app.post('/api/removeDuplicates', optionalJwt, async function (req, res) {
+app.post('/api/removeDuplicates', optionalJwt, requirePermission('filemanager'), async function (req, res) {
     const duplicate_key = req.body.duplicate_key;
     const removal_mode = req.body.removal_mode;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
@@ -1540,11 +1523,57 @@ app.post('/api/removeDuplicates', optionalJwt, async function (req, res) {
     res.send(result);
 });
 
-app.post('/api/updateFile', optionalJwt, async function (req, res) {
+// Fields the video info dialog can edit. Anything else in change_obj is dropped rather
+// than written: the record also holds ownership and identity fields, and this endpoint
+// has no business letting a client rewrite those.
+const EDITABLE_FILE_FIELDS = [
+    'title', 'uploader', 'url', 'upload_date', 'description', 'view_count',
+    'local_view_count', 'height', 'abr', 'size', 'isAudio', 'favorite',
+    'category', 'thumbnailURL', 'thumbnailPath'
+];
+
+// path is deliberately absent: the video info dialog only displays it, and letting a
+// caller write it turns this into a way to point a record at another user's media -- or
+// at a directory, which the delete path then removes recursively.
+//
+// thumbnailPath is editable because the dialog really does edit it, so it is checked
+// instead: it has to land inside a directory this server already serves.
+const PATH_FILE_FIELDS = ['thumbnailPath'];
+
+app.post('/api/updateFile', optionalJwt, requirePermission('filemanager'), async function (req, res) {
     const uid = req.body.uid;
     const change_obj = req.body.change_obj;
+    const user_uid = req.isAuthenticated() ? req.user.uid : null;
 
-    const file = await db_api.updateRecord('files', {uid: uid}, change_obj);
+    if (!change_obj || typeof change_obj !== 'object' || Array.isArray(change_obj)) {
+        res.send({success: false, error: 'No changes provided'});
+        return;
+    }
+
+    const filtered_change_obj = {};
+    for (const field of EDITABLE_FILE_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(change_obj, field)) filtered_change_obj[field] = change_obj[field];
+    }
+
+    for (const field of PATH_FILE_FIELDS) {
+        if (!Object.prototype.hasOwnProperty.call(filtered_change_obj, field)) continue;
+        if (!utils.isPathInsideMediaRoots(filtered_change_obj[field], user_uid)) {
+            logger.error(`Refusing to set ${field} on file ${uid} to a path outside the caller's media folders.`);
+            res.send({success: false, error: `${field} must be inside a configured media folder`});
+            return;
+        }
+    }
+
+    if (Object.keys(filtered_change_obj).length === 0) {
+        res.send({success: false, error: 'No editable changes provided'});
+        return;
+    }
+
+    // Scoped to the caller in multi-user mode, so one user cannot edit another's records.
+    const file_filter = {uid: uid};
+    if (config_api.getConfigItem('ytdl_multi_user_mode') && user_uid) file_filter['user_uid'] = user_uid;
+
+    const file = await db_api.updateRecord('files', file_filter, filtered_change_obj);
 
     if (!file) {
         res.send({
@@ -1571,7 +1600,7 @@ app.post('/api/checkConcurrentStream', async (req, res) => {
     res.send({stream: concurrentStreams[uid]})
 });
 
-app.post('/api/updateConcurrentStream', optionalJwt, async (req, res) => {
+app.post('/api/updateConcurrentStream', optionalJwt, requireAuthenticated, async (req, res) => {
     const uid = req.body.uid;
     const playback_timestamp = req.body.playback_timestamp;
     const unix_timestamp = req.body.unix_timestamp;
@@ -1586,7 +1615,7 @@ app.post('/api/updateConcurrentStream', optionalJwt, async (req, res) => {
     res.send({stream: concurrentStreams[uid]})
 });
 
-app.post('/api/getFullTwitchChat', optionalJwt, async (req, res) => {
+app.post('/api/getFullTwitchChat', optionalJwt, requireAuthenticated, async (req, res) => {
     var id = req.body.id;
     var type = req.body.type;
     var uuid = req.body.uuid;
@@ -1605,7 +1634,7 @@ app.post('/api/getFullTwitchChat', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/downloadTwitchChatByVODID', optionalJwt, async (req, res) => {
+app.post('/api/downloadTwitchChatByVODID', optionalJwt, requireAuthenticated, async (req, res) => {
     var id = req.body.id;
     var type = req.body.type;
     var vodId = req.body.vodId;
@@ -1633,14 +1662,14 @@ app.post('/api/downloadTwitchChatByVODID', optionalJwt, async (req, res) => {
 });
 
 // video sharing
-app.post('/api/enableSharing', optionalJwt, async (req, res) => {
+app.post('/api/enableSharing', optionalJwt, requirePermission('sharing'), async (req, res) => {
     var uid = req.body.uid;
     var is_playlist = req.body.is_playlist;
     let success = false;
     // multi-user mode
     if (req.isAuthenticated()) {
         // if multi user mode, use this method instead
-        success = auth_api.changeSharingMode(req.user.uid, uid, is_playlist, true);
+        success = await auth_api.changeSharingMode(req.user.uid, uid, is_playlist, true);
         res.send({success: success});
         return;
     }
@@ -1669,11 +1698,19 @@ app.post('/api/enableSharing', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/disableSharing', optionalJwt, async function(req, res) {
+app.post('/api/disableSharing', optionalJwt, requirePermission('sharing'), async function(req, res) {
     var type = req.body.type;
     var uid = req.body.uid;
     var is_playlist = req.body.is_playlist;
     let success = null;
+
+    // Was unscoped in exactly the way enableSharing was, and is fixed the same way: the
+    // owner check lives in changeSharingMode so both directions go through it.
+    if (req.isAuthenticated()) {
+        success = await auth_api.changeSharingMode(req.user.uid, uid, is_playlist, false);
+        res.send({success: success});
+        return;
+    }
 
     try {
         success = true;
@@ -1695,19 +1732,62 @@ app.post('/api/disableSharing', optionalJwt, async function(req, res) {
     });
 });
 
-app.post('/api/incrementViewCount', async (req, res) => {
-    let file_uid = req.body.file_uid;
-    let sub_id = req.body.sub_id;
-    let uuid = req.body.uuid;
+/*************************************************
+ * Unauthenticated by necessity: the player calls it
+ * for a shared video, and a share link carries no
+ * session. That is not a reason to accept any uid
+ * that is named, though.
+ *
+ * An authenticated caller writes to their own
+ * records. Anybody else has to demonstrate the same
+ * capability a share link does -- the file is
+ * shared, or it belongs to a shared playlist --
+ * rather than merely knowing an owner uid and a
+ * file uid, both of which appear in ordinary URLs.
+ ************************************************/
+app.post('/api/incrementViewCount', resolveJwtIfPresent, async (req, res) => {
+    const file_uid = req.body.file_uid;
+    const sub_id = req.body.sub_id;
+    const playlist_id = req.body.playlist_id;
+    const multi_user_mode = !!config_api.getConfigItem('ytdl_multi_user_mode');
+    const authenticated_uid = req.isAuthenticated() && req.user ? req.user.uid : null;
 
-    if (req.isAuthenticated()) uuid = req.user.uid;
+    let file_obj = null;
+    if (authenticated_uid || !multi_user_mode) {
+        file_obj = await files_api.getVideo(file_uid, authenticated_uid, sub_id);
+    } else {
+        const uuid = req.body.uuid;
+        if (!uuid) {
+            res.sendStatus(401);
+            return;
+        }
 
-    const file_obj = await files_api.getVideo(file_uid, uuid, sub_id);
+        if (playlist_id) {
+            const playlist = await files_api.getPlaylist(playlist_id, uuid, true);
+            const playlist_uids = playlist && Array.isArray(playlist['uids']) ? playlist['uids'] : [];
+            if (playlist_uids.includes(file_uid)) file_obj = await files_api.getVideo(file_uid, uuid, sub_id);
+        } else {
+            // Requires sharingEnabled, which is what a share link actually proves.
+            file_obj = await auth_api.getUserVideo(uuid, file_uid, true);
+        }
 
-    const current_view_count = file_obj && file_obj['local_view_count'] ? file_obj['local_view_count'] : 0;
+        if (!file_obj) {
+            res.sendStatus(401);
+            return;
+        }
+    }
+
+    if (!file_obj) {
+        // Used to fall through and write anyway, which incremented a counter on a record
+        // the caller could not even read.
+        res.sendStatus(404);
+        return;
+    }
+
+    const current_view_count = file_obj['local_view_count'] ? file_obj['local_view_count'] : 0;
     const new_view_count = current_view_count + 1;
 
-    await db_api.setVideoProperty(file_uid, {local_view_count: new_view_count}, uuid, sub_id);
+    await db_api.setVideoProperty(file_uid, {local_view_count: new_view_count}, file_obj['user_uid']);
 
     res.send({
         success: true
@@ -1716,12 +1796,12 @@ app.post('/api/incrementViewCount', async (req, res) => {
 
 // categories
 
-app.post('/api/getAllCategories', optionalJwt, async (req, res) => {
+app.post('/api/getAllCategories', optionalJwt, requireAuthenticated, async (req, res) => {
     const categories = await db_api.getRecords('categories');
     res.send({categories: categories});
 });
 
-app.post('/api/createCategory', optionalJwt, async (req, res) => {
+app.post('/api/createCategory', optionalJwt, requirePermission('settings'), async (req, res) => {
     const name = req.body.name;
     const new_category = {
         name: name,
@@ -1739,7 +1819,7 @@ app.post('/api/createCategory', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/createDefaultCategories', optionalJwt, async (req, res) => {
+app.post('/api/createDefaultCategories', optionalJwt, requirePermission('settings'), async (req, res) => {
     const existing_categories = await db_api.getRecords('categories');
     if (existing_categories && existing_categories.length > 0) {
         res.send({
@@ -1757,7 +1837,7 @@ app.post('/api/createDefaultCategories', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/deleteCategory', optionalJwt, async (req, res) => {
+app.post('/api/deleteCategory', optionalJwt, requirePermission('settings'), async (req, res) => {
     const category_uid = req.body.category_uid;
 
     await db_api.removeRecord('categories', {uid: category_uid});
@@ -1767,13 +1847,13 @@ app.post('/api/deleteCategory', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/updateCategory', optionalJwt, async (req, res) => {
+app.post('/api/updateCategory', optionalJwt, requirePermission('settings'), async (req, res) => {
     const category = req.body.category;
     await db_api.updateRecord('categories', {uid: category.uid}, category)
     res.send({success: true});
 });
 
-app.post('/api/updateCategories', optionalJwt, async (req, res) => {
+app.post('/api/updateCategories', optionalJwt, requirePermission('settings'), async (req, res) => {
     const categories = req.body.categories;
     await db_api.removeAllRecords('categories');
     await db_api.insertRecordsIntoTable('categories', categories);
@@ -1782,7 +1862,7 @@ app.post('/api/updateCategories', optionalJwt, async (req, res) => {
 
 // subscriptions
 
-app.post('/api/subscribe', optionalJwt, async (req, res) => {
+app.post('/api/subscribe', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let name = req.body.name;
     let url = req.body.url;
     let maxQuality = req.body.maxQuality;
@@ -1815,6 +1895,12 @@ app.post('/api/subscribe', optionalJwt, async (req, res) => {
         new_sub.custom_output = customOutput;
     }
 
+    const refusal = await refuseUnsafeDownloadOptions(req, {customArgs: customArgs, customOutput: customOutput}, url);
+    if (refusal) {
+        res.status(refusal.status).send({success: false, error: refusal.error});
+        return;
+    }
+
     const result_obj = await subscriptions_api.subscribe(new_sub, user_uid);
 
     if (result_obj.success) {
@@ -1829,7 +1915,7 @@ app.post('/api/subscribe', optionalJwt, async (req, res) => {
     }
 });
 
-app.post('/api/unsubscribe', optionalJwt, async (req, res) => {
+app.post('/api/unsubscribe', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let deleteMode = req.body.deleteMode
     let sub_id = req.body.sub_id;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
@@ -1847,7 +1933,7 @@ app.post('/api/unsubscribe', optionalJwt, async (req, res) => {
     }
 });
 
-app.post('/api/deleteSubscriptionFile', optionalJwt, async (req, res) => {
+app.post('/api/deleteSubscriptionFile', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let deleteForever = req.body.deleteForever;
     let file_uid = req.body.file_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
@@ -1864,7 +1950,7 @@ app.post('/api/deleteSubscriptionFile', optionalJwt, async (req, res) => {
 
 });
 
-app.post('/api/getSubscription', optionalJwt, async (req, res) => {
+app.post('/api/getSubscription', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let subID = req.body.id;
     let subName = req.body.name; // if included, subID is optional
     const include_videos = req.body.include_videos !== false;
@@ -1919,7 +2005,7 @@ app.post('/api/getSubscription', optionalJwt, async (req, res) => {
     }
 });
 
-app.post('/api/downloadVideosForSubscription', optionalJwt, async (req, res) => {
+app.post('/api/downloadVideosForSubscription', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     const subID = req.body.subID;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
 
@@ -1934,9 +2020,18 @@ app.post('/api/downloadVideosForSubscription', optionalJwt, async (req, res) => 
     });
 });
 
-app.post('/api/updateSubscription', optionalJwt, async (req, res) => {
+app.post('/api/updateSubscription', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     const updated_sub = req.body.subscription;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
+
+    const refusal = await refuseUnsafeDownloadOptions(req, {
+        customArgs: updated_sub && updated_sub['custom_args'],
+        customOutput: updated_sub && updated_sub['custom_output']
+    });
+    if (refusal) {
+        res.status(refusal.status).send({success: false, error: refusal.error});
+        return;
+    }
 
     const success = await subscriptions_api.updateSubscription(updated_sub, user_uid);
     res.send({
@@ -1944,7 +2039,7 @@ app.post('/api/updateSubscription', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/checkSubscription', optionalJwt, async (req, res) => {
+app.post('/api/checkSubscription', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let sub_id = req.body.sub_id;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
 
@@ -1954,7 +2049,7 @@ app.post('/api/checkSubscription', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/redownloadSubscription', optionalJwt, async (req, res) => {
+app.post('/api/redownloadSubscription', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let sub_id = req.body.sub_id;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
 
@@ -1962,7 +2057,7 @@ app.post('/api/redownloadSubscription', optionalJwt, async (req, res) => {
     res.send(result);
 });
 
-app.post('/api/cancelCheckSubscription', optionalJwt, async (req, res) => {
+app.post('/api/cancelCheckSubscription', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let sub_id = req.body.sub_id;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
 
@@ -1972,7 +2067,7 @@ app.post('/api/cancelCheckSubscription', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/cancelSubscriptionCheck', optionalJwt, async (req, res) => {
+app.post('/api/cancelSubscriptionCheck', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let sub_id = req.body.sub_id;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
 
@@ -1982,7 +2077,7 @@ app.post('/api/cancelSubscriptionCheck', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/getSubscriptions', optionalJwt, async (req, res) => {
+app.post('/api/getSubscriptions', optionalJwt, requirePermission('subscriptions'), async (req, res) => {
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
 
     // get subs from api
@@ -1993,7 +2088,7 @@ app.post('/api/getSubscriptions', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/createPlaylist', optionalJwt, async (req, res) => {
+app.post('/api/createPlaylist', optionalJwt, requireAuthenticated, async (req, res) => {
     let playlistName = req.body.playlistName;
     let uids = req.body.uids;
 
@@ -2005,7 +2100,7 @@ app.post('/api/createPlaylist', optionalJwt, async (req, res) => {
     })
 });
 
-app.post('/api/getPlaylist', optionalJwt, async (req, res) => {
+app.post('/api/getPlaylist', optionalJwt, requireAuthenticatedOrShared, async (req, res) => {
     let playlist_id = req.body.playlist_id;
     let uuid = req.body.uuid ? req.body.uuid : (req.user && req.user.uid ? req.user.uid : null);
     let include_file_metadata = req.body.include_file_metadata;
@@ -2026,14 +2121,14 @@ app.post('/api/getPlaylist', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/getPlaylists', optionalJwt, async (req, res) => {
+app.post('/api/getPlaylists', optionalJwt, requireAuthenticated, async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
     const include_categories = req.body.include_categories;
     const filter_obj = getScopedFilterByUser(uuid);
 
     let playlists = await db_api.getRecords('playlists', filter_obj);
     if (include_categories) {
-        const categories = await categories_api.getCategoriesAsPlaylists();
+        const categories = await categories_api.getCategoriesAsPlaylists(uuid);
         if (categories) {
             playlists = playlists.concat(categories);
         }
@@ -2044,7 +2139,7 @@ app.post('/api/getPlaylists', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/addFileToPlaylist', optionalJwt, async (req, res) => {
+app.post('/api/addFileToPlaylist', optionalJwt, requireAuthenticated, async (req, res) => {
     let playlist_id = req.body.playlist_id;
     let file_uid = req.body.file_uid;
     
@@ -2072,7 +2167,7 @@ app.post('/api/addFileToPlaylist', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/updatePlaylist', optionalJwt, async (req, res) => {
+app.post('/api/updatePlaylist', optionalJwt, requireAuthenticated, async (req, res) => {
     let playlist = req.body.playlist;
     let success = await files_api.updatePlaylist(playlist, req.user && req.user.uid);
     res.send({
@@ -2080,7 +2175,7 @@ app.post('/api/updatePlaylist', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/deletePlaylist', optionalJwt, async (req, res) => {
+app.post('/api/deletePlaylist', optionalJwt, requireAuthenticated, async (req, res) => {
     let playlistID = req.body.playlist_id;
     const delete_files = req.body.delete_files === true;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
@@ -2125,7 +2220,7 @@ app.post('/api/deletePlaylist', optionalJwt, async (req, res) => {
 });
 
 // deletes non-subscription files
-app.post('/api/deleteFile', optionalJwt, async (req, res) => {
+app.post('/api/deleteFile', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const uid = req.body.uid;
     const blacklistMode = req.body.blacklistMode;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
@@ -2136,7 +2231,7 @@ app.post('/api/deleteFile', optionalJwt, async (req, res) => {
 });
 
 // creates a new file containing only the selected range of an existing file
-app.post('/api/snipFile', optionalJwt, async (req, res) => {
+app.post('/api/snipFile', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const uid = req.body.uid;
     const start = req.body.start;
     const end = req.body.end;
@@ -2192,7 +2287,7 @@ app.post('/api/snipFile', optionalJwt, async (req, res) => {
     res.send({success: true, job_uid: job_uid});
 });
 
-app.post('/api/getSnipStatus', optionalJwt, async (req, res) => {
+app.post('/api/getSnipStatus', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const job_uid = req.body.job_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const job = typeof job_uid === 'string' ? snipJobs[job_uid] : null;
@@ -2218,7 +2313,7 @@ app.post('/api/getSnipStatus', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/deleteAllFiles', optionalJwt, async (req, res) => {
+app.post('/api/deleteAllFiles', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const blacklistMode = false;
     const uuid = req.isAuthenticated() ? req.user.uid : null;
 
@@ -2258,13 +2353,16 @@ app.post('/api/deleteAllFiles', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/downloadFileFromServer', optionalJwt, async (req, res) => {
+app.post('/api/downloadFileFromServer', optionalJwt, requireAuthenticatedOrShared, async (req, res) => {
     let uid = req.body.uid;
     let uuid = req.body.uuid;
     let playlist_id = req.body.playlist_id;
     let sub_id = req.body.sub_id;
 
     let file_path_to_download = null;
+    // The container's own name is now only ever a display name -- the archive on disk is
+    // named by the server -- so it is carried separately and used for the header.
+    let download_display_name = null;
 
     if (req.user && req.user.uid) uuid = req.user.uid;
 
@@ -2284,7 +2382,8 @@ app.post('/api/downloadFileFromServer', optionalJwt, async (req, res) => {
         }
 
         // generate zip
-        file_path_to_download = await utils.createContainerZipFile(playlist['name'], playlist_files_to_download);
+        download_display_name = playlist['name'];
+        file_path_to_download = await utils.createContainerZipFile(playlist['name'], playlist_files_to_download, uuid);
     } else if (sub_id && !uid) {
         zip_file_generated = true;
         const sub = await subscriptions_api.getSubscription(sub_id, req.isAuthenticated() ? req.user.uid : null);
@@ -2295,7 +2394,9 @@ app.post('/api/downloadFileFromServer', optionalJwt, async (req, res) => {
         const sub_files_to_download = await db_api.getRecords('files', {sub_id: sub_id, ...getScopedFilterByUser(req.isAuthenticated() ? req.user.uid : null)});
 
         // generate zip
-        file_path_to_download = await utils.createContainerZipFile(sub['name'], sub_files_to_download);
+        download_display_name = sub['name'];
+        file_path_to_download = await utils.createContainerZipFile(sub['name'], sub_files_to_download,
+            req.isAuthenticated() ? req.user.uid : null);
     } else {
         const file_obj = await files_api.getVideo(uid, uuid, sub_id)
         if (!file_obj) {
@@ -2303,23 +2404,49 @@ app.post('/api/downloadFileFromServer', optionalJwt, async (req, res) => {
             return;
         }
         file_path_to_download = file_obj.path;
+        // Same reasoning as /api/stream: this is the point where a stored string becomes
+        // a filesystem read. The generated-zip branches above are exempt because their
+        // paths are built here rather than read out of a record.
+        if (!utils.isServableMediaFile(file_path_to_download, file_obj['user_uid'])) {
+            logger.error(`Refusing to send ${uid}: its path is not a regular file inside its owner's media folder.`);
+            res.sendStatus(404);
+            return;
+        }
     }
+    if (!file_path_to_download) {
+        // The archive could not be built -- every record was refused, or the write failed.
+        logger.error('Failed to build an archive to send.');
+        res.sendStatus(500);
+        return;
+    }
+
     if (!path.isAbsolute(file_path_to_download)) file_path_to_download = path.join(__dirname, file_path_to_download);
-    res.sendFile(file_path_to_download, function (err) {
+
+    const afterSend = function (err) {
         if (err) {
           logger.error(err);
-        } else if (zip_file_generated) {
+        }
+        if (zip_file_generated) {
           try {
-            // delete generated zip file
+            // delete generated zip file, whether or not the send succeeded
             fs.unlinkSync(file_path_to_download);
           } catch(e) {
             logger.error(`Failed to remove file after sending to client: ${file_path_to_download}`);
           }
         }
-    });
+    };
+
+    if (download_display_name) {
+        // res.download builds the Content-Disposition header itself, which is where the
+        // caller's chosen name belongs -- it names the file in their browser and never
+        // touches a path on this machine.
+        res.download(file_path_to_download, `${download_display_name}.zip`, afterSend);
+    } else {
+        res.sendFile(file_path_to_download, afterSend);
+    }
 });
 
-app.post('/api/getArchives', optionalJwt, async (req, res) => {
+app.post('/api/getArchives', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
     const sub_id = req.body.sub_id;
     const filter_obj = {sub_id: sub_id, ...getScopedFilterByUser(uuid)};
@@ -2335,7 +2462,7 @@ app.post('/api/getArchives', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/downloadArchive', optionalJwt, async (req, res) => {
+app.post('/api/downloadArchive', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
     const sub_id = req.body.sub_id; 
     const type = req.body.type;
@@ -2352,7 +2479,7 @@ app.post('/api/downloadArchive', optionalJwt, async (req, res) => {
 
 });
 
-app.post('/api/importArchive', optionalJwt, async (req, res) => {
+app.post('/api/importArchive', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
     const archive = req.body.archive;
     const sub_id = req.body.sub_id; 
@@ -2368,7 +2495,7 @@ app.post('/api/importArchive', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/deleteArchiveItems', optionalJwt, async (req, res) => {
+app.post('/api/deleteArchiveItems', optionalJwt, requirePermission('filemanager'), async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
     const archives = req.body.archives;
 
@@ -2382,8 +2509,18 @@ app.post('/api/deleteArchiveItems', optionalJwt, async (req, res) => {
     });
 });
 
-var upload_multer = multer({ dest: __dirname + '/appdata/' });
-app.post('/api/uploadCookies', upload_multer.single('cookies'), async (req, res) => {
+// The limit matters as much as the guard: multer writes the body to disk while it parses,
+// so without one an upload is a way to fill the volume before any handler runs.
+const MAX_COOKIE_UPLOAD_BYTES = 2 * 1024 * 1024;
+var upload_multer = multer({
+    dest: __dirname + '/appdata/',
+    limits: {fileSize: MAX_COOKIE_UPLOAD_BYTES, files: 1}
+});
+
+// cookies.txt is one file shared by every download on the server, so replacing it is an
+// administrator's action. The guards run before multer, so an unauthenticated request is
+// refused before its body is written anywhere.
+app.post('/api/uploadCookies', optionalJwt, requireAdmin, upload_multer.single('cookies'), async (req, res) => {
     if (!req.file || !req.file.path) {
         res.sendStatus(400);
         return;
@@ -2450,7 +2587,7 @@ function normalizeCookieTestError(err) {
     return message.length > max_error_length ? message.substring(0, max_error_length) + '...' : message;
 }
 
-app.post('/api/testCookies', testCookiesRateLimiter, optionalJwt, async (req, res) => {
+app.post('/api/testCookies', testCookiesRateLimiter, optionalJwt, requireAdmin, async (req, res) => {
     const logs = [];
     const use_cookies_enabled = config_api.getConfigItem('ytdl_use_cookies');
     const downloader = config_api.getConfigItem('ytdl_default_downloader');
@@ -2612,7 +2749,7 @@ app.post('/api/testCookies', testCookiesRateLimiter, optionalJwt, async (req, re
 
 // Updater API calls
 
-app.get('/api/updaterStatus', optionalJwt, async (req, res) => {
+app.get('/api/updaterStatus', optionalJwt, requireAdmin, async (req, res) => {
     let status = updaterStatus;
 
     if (status) {
@@ -2623,7 +2760,7 @@ app.get('/api/updaterStatus', optionalJwt, async (req, res) => {
 
 });
 
-app.post('/api/updateServer', optionalJwt, async (req, res) => {
+app.post('/api/updateServer', optionalJwt, requireAdmin, async (req, res) => {
     let tag = req.body.tag;
 
     updateServer(tag);
@@ -2634,17 +2771,9 @@ app.post('/api/updateServer', optionalJwt, async (req, res) => {
 
 });
 
-// API Key API calls
-
-app.post('/api/generateNewAPIKey', optionalJwt, function (req, res) {
-    const new_api_key = uuid();
-    config_api.setConfigItem('ytdl_api_key', new_api_key);
-    res.send({new_api_key: new_api_key});
-});
-
 // Streaming API calls
 
-app.get('/api/stream', optionalJwt, async (req, res) => {
+app.get('/api/stream', optionalJwt, requireAuthenticatedOrShared, async (req, res) => {
     const type = req.query.type;
     const uuid = req.user ? req.user.uid : (req.query.uuid ? req.query.uuid : null);
     const sub_id = req.query.sub_id;
@@ -2668,6 +2797,14 @@ app.get('/api/stream', optionalJwt, async (req, res) => {
     }
     if (!file_path || !file_obj) {
         logger.warn(`Stream lookup failed for UID ${uid}.`);
+        res.status(404).type('text/plain').send('Media file not found');
+        return;
+    }
+    // The path comes out of the database, so it is checked here as well as where it is
+    // written. This route turns a stored string into a filesystem read, which makes it
+    // the last place the check is still cheap.
+    if (!utils.isServableMediaFile(file_path, file_obj['user_uid'])) {
+        logger.error(`Refusing to stream ${uid}: its path is not a regular file inside its owner's media folder.`);
         res.status(404).type('text/plain').send('Media file not found');
         return;
     }
@@ -2713,7 +2850,7 @@ app.get('/api/stream', optionalJwt, async (req, res) => {
     }
 });
 
-app.get('/api/streamSubtitle', optionalJwt, async (req, res) => {
+app.get('/api/streamSubtitle', optionalJwt, requireAuthenticatedOrShared, async (req, res) => {
     const uuid = req.user ? req.user.uid : (req.query.uuid ? req.query.uuid : null);
     const sub_id = req.query.sub_id;
     const requestedUID = typeof req.query.uid === 'string' ? req.query.uid : '';
@@ -2756,45 +2893,26 @@ app.get('/api/streamSubtitle', optionalJwt, async (req, res) => {
     res.sendFile(resolved_subtitle_path);
 });
 
-app.get('/api/thumbnail/:path', optionalJwt, async (req, res) => {
-    // Express route params are already decoded.
-    const requestedPath = typeof req.params.path === 'string' ? req.params.path : '';
-    const resolvedRequestedPath = path.isAbsolute(requestedPath) ? path.resolve(requestedPath) : path.resolve(__dirname, requestedPath);
-    const thumbnailExt = path.extname(resolvedRequestedPath).toLowerCase();
-    const allowedThumbnailExts = new Set(['.jpg', '.jpeg', '.png', '.webp']);
-    if (!allowedThumbnailExts.has(thumbnailExt)) {
-        res.sendStatus(400);
+app.get('/api/thumbnail/:uid', optionalJwt, requireAuthenticated, async (req, res) => {
+    /*************************************************
+     * Identifies the thumbnail by the uid of the file
+     * it belongs to, never by a path off the URL.
+     * files_api.getThumbnailPathForUser carries the
+     * reasoning and the checks.
+     *
+     * One answer for "no such file", "not yours" and
+     * "the record points somewhere it should not", so
+     * the endpoint cannot be used to find out which
+     * uids exist.
+     ************************************************/
+    const caller_uid = req.isAuthenticated() && req.user ? req.user.uid : null;
+    const thumbnail_path = await files_api.getThumbnailPathForUser(req.params.uid, caller_uid);
+    if (!thumbnail_path) {
+        res.sendStatus(404);
         return;
     }
 
-    const configuredRoots = [
-        __dirname,
-        config_api.getConfigItem('ytdl_audio_folder_path'),
-        config_api.getConfigItem('ytdl_video_folder_path'),
-        config_api.getConfigItem('ytdl_subscriptions_base_path'),
-        config_api.getConfigItem('ytdl_users_base_path')
-    ]
-        .filter(Boolean)
-        .map(root => path.resolve(__dirname, root));
-
-    let thumbnailRoot = null;
-    let thumbnailRelativePath = null;
-    for (const root of configuredRoots) {
-        const relativePath = path.relative(root, resolvedRequestedPath);
-        if (relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)) {
-            thumbnailRoot = root;
-            thumbnailRelativePath = relativePath;
-            break;
-        }
-    }
-
-    if (!thumbnailRoot || !thumbnailRelativePath) {
-        logger.warn(`Refusing thumbnail request outside allowed roots: ${requestedPath}`);
-        res.sendStatus(403);
-        return;
-    }
-
-    res.sendFile(thumbnailRelativePath, { root: thumbnailRoot }, (err) => {
+    res.sendFile(thumbnail_path, (err) => {
         if (!err) return;
         if (res.headersSent) return;
         if (err.statusCode === 404) {
@@ -2920,7 +3038,7 @@ async function hasScopedDownload(download_uid, user_uid) {
     return downloads.length > 0;
 }
 
-app.post('/api/downloads', optionalJwt, async (req, res) => {
+app.post('/api/downloads', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const uids = req.body.uids;
     const only_unfinished = req.body.only_unfinished === true;
@@ -3019,7 +3137,7 @@ app.post('/api/downloads', optionalJwt, async (req, res) => {
     });
 });
 
-app.post('/api/download', optionalJwt, async (req, res) => {
+app.post('/api/download', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const download_uid = req.body.download_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const scoped_filter = getScopedFilterByUser(user_uid);
@@ -3042,7 +3160,7 @@ app.post('/api/download', optionalJwt, async (req, res) => {
     }
 });
 
-app.post('/api/clearDownloads', optionalJwt, async (req, res) => {
+app.post('/api/clearDownloads', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const scoped_filter = getScopedFilterByUser(user_uid);
     const clear_finished = req.body.clear_finished;
@@ -3079,7 +3197,7 @@ app.post('/api/clearDownloads', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/clearDownload', optionalJwt, async (req, res) => {
+app.post('/api/clearDownload', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const download_uid = req.body.download_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     if (!(await hasScopedDownload(download_uid, user_uid))) {
@@ -3090,7 +3208,7 @@ app.post('/api/clearDownload', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/pauseDownload', optionalJwt, async (req, res) => {
+app.post('/api/pauseDownload', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const download_uid = req.body.download_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     if (!(await hasScopedDownload(download_uid, user_uid))) {
@@ -3101,7 +3219,7 @@ app.post('/api/pauseDownload', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/pauseAllDownloads', optionalJwt, async (req, res) => {
+app.post('/api/pauseAllDownloads', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     let success = true;
     const all_running_downloads = await db_api.getRecords(
@@ -3118,7 +3236,7 @@ app.post('/api/pauseAllDownloads', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/resumeDownload', optionalJwt, async (req, res) => {
+app.post('/api/resumeDownload', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const download_uid = req.body.download_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     if (!(await hasScopedDownload(download_uid, user_uid))) {
@@ -3129,7 +3247,7 @@ app.post('/api/resumeDownload', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/resumeAllDownloads', optionalJwt, async (req, res) => {
+app.post('/api/resumeAllDownloads', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     let success = true;
     const all_paused_downloads = await db_api.getRecords(
@@ -3146,7 +3264,7 @@ app.post('/api/resumeAllDownloads', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/restartDownload', optionalJwt, async (req, res) => {
+app.post('/api/restartDownload', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const download_uid = req.body.download_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     if (!(await hasScopedDownload(download_uid, user_uid))) {
@@ -3157,7 +3275,7 @@ app.post('/api/restartDownload', optionalJwt, async (req, res) => {
     res.send({success: !!new_download, new_download_uid: new_download ? new_download['uid'] : null});
 });
 
-app.post('/api/cancelDownload', optionalJwt, async (req, res) => {
+app.post('/api/cancelDownload', optionalJwt, requirePermission('downloads_manager'), async (req, res) => {
     const download_uid = req.body.download_uid;
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     if (!(await hasScopedDownload(download_uid, user_uid))) {
@@ -3170,7 +3288,7 @@ app.post('/api/cancelDownload', optionalJwt, async (req, res) => {
 
 // tasks
 
-app.post('/api/getTasks', optionalJwt, async (req, res) => {
+app.post('/api/getTasks', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const tasks = await db_api.getRecords('tasks');
     for (let task of tasks) {
         if (!tasks_api.TASKS[task['key']]) {
@@ -3184,7 +3302,7 @@ app.post('/api/getTasks', optionalJwt, async (req, res) => {
     res.send({tasks: tasks});
 });
 
-app.post('/api/resetTasks', optionalJwt, async (req, res) => {
+app.post('/api/resetTasks', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const tasks_keys = Object.keys(tasks_api.TASKS);
     for (let i = 0; i < tasks_keys.length; i++) {
         const task_key = tasks_keys[i];
@@ -3195,7 +3313,7 @@ app.post('/api/resetTasks', optionalJwt, async (req, res) => {
     res.send({success: true});
 });
 
-app.post('/api/getTask', optionalJwt, async (req, res) => {
+app.post('/api/getTask', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const task_key = req.body.task_key;
     const task = await db_api.getRecord('tasks', {key: task_key});
     const job = tasks_api.TASKS[task_key] && tasks_api.TASKS[task_key]['job'];
@@ -3204,7 +3322,7 @@ app.post('/api/getTask', optionalJwt, async (req, res) => {
     res.send({task: task});
 });
 
-app.post('/api/runTask', optionalJwt, async (req, res) => {
+app.post('/api/runTask', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const task_key = req.body.task_key;
     const task = await db_api.getRecord('tasks', {key: task_key});
 
@@ -3215,7 +3333,7 @@ app.post('/api/runTask', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/confirmTask', optionalJwt, async (req, res) => {
+app.post('/api/confirmTask', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const task_key = req.body.task_key;
     const task = await db_api.getRecord('tasks', {key: task_key});
 
@@ -3226,7 +3344,7 @@ app.post('/api/confirmTask', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/updateTaskSchedule', optionalJwt, async (req, res) => {
+app.post('/api/updateTaskSchedule', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const task_key = req.body.task_key;
     const new_schedule = req.body.new_schedule;
   
@@ -3235,7 +3353,7 @@ app.post('/api/updateTaskSchedule', optionalJwt, async (req, res) => {
     res.send({success: true});
 });
 
-app.post('/api/updateTaskData', optionalJwt, async (req, res) => {
+app.post('/api/updateTaskData', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const task_key = req.body.task_key;
     const new_data = req.body.new_data;
   
@@ -3244,7 +3362,7 @@ app.post('/api/updateTaskData', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/updateTaskOptions', optionalJwt, async (req, res) => {
+app.post('/api/updateTaskOptions', optionalJwt, requirePermission('tasks_manager'), async (req, res) => {
     const task_key = req.body.task_key;
     const new_options = req.body.new_options;
   
@@ -3253,7 +3371,7 @@ app.post('/api/updateTaskOptions', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/getDBBackups', optionalJwt, async (req, res) => {
+app.post('/api/getDBBackups', optionalJwt, requireAdmin, async (req, res) => {
     const backup_dir = path.join('appdata', 'db_backup');
     fs.ensureDirSync(backup_dir);
     const db_backups = [];
@@ -3276,7 +3394,7 @@ app.post('/api/getDBBackups', optionalJwt, async (req, res) => {
     res.send({db_backups: db_backups});
 });
 
-app.post('/api/restoreDBBackup', optionalJwt, async (req, res) => {
+app.post('/api/restoreDBBackup', optionalJwt, requireAdmin, async (req, res) => {
     const file_name = req.body.file_name;
 
     const success = await db_api.restoreDB(file_name);
@@ -3286,7 +3404,7 @@ app.post('/api/restoreDBBackup', optionalJwt, async (req, res) => {
 
 // logs management
 
-app.post('/api/logs', optionalJwt, async function(req, res) {
+app.post('/api/logs', optionalJwt, requireAdmin, async function(req, res) {
     let logs = null;
     let lines = req.body.lines;
     const logs_path = path.join('appdata', 'logs', 'combined.log')
@@ -3303,7 +3421,7 @@ app.post('/api/logs', optionalJwt, async function(req, res) {
     });
 });
 
-app.post('/api/clearAllLogs', optionalJwt, async function(req, res) {
+app.post('/api/clearAllLogs', optionalJwt, requireAdmin, async function(req, res) {
     const logs_path = path.join('appdata', 'logs', 'combined.log');
     const logs_err_path = path.join('appdata', 'logs', 'error.log');
     let success = false;
@@ -3322,7 +3440,7 @@ app.post('/api/clearAllLogs', optionalJwt, async function(req, res) {
     });
 });
 
-  app.post('/api/getFileFormats', optionalJwt, async (req, res) => {
+  app.post('/api/getFileFormats', optionalJwt, requireAuthenticated, async (req, res) => {
     const url = req.body.url;
     const result = await downloader_api.getVideoInfoByURL(url, [], null, {forceYtDlp: true});
     res.send({
@@ -3403,7 +3521,18 @@ app.post('/api/auth/register', optionalJwt, async (req, res) => {
     const username = req.body.username;
     const plaintextPassword = req.body.password;
 
-    if (userid !== 'admin' && !config_api.getConfigItem('ytdl_allow_registration') && !req.isAuthenticated() && (!req.user || !exports.userHasPermission(req.user.uid, 'settings'))) {
+    // Closing registration is meant to stop strangers signing themselves up, not to stop
+    // an administrator adding an account from the settings page. That exception was
+    // written as `exports.userHasPermission(...)`, which app.js does not define and never
+    // awaited -- so it either threw or, more usually, was skipped entirely by the
+    // short-circuit in front of it, and the settings page could not add users at all.
+    // Admin rather than the 'settings' permission: every other user-management route
+    // (getUsers, getRoles, changeUser, deleteUser) is admin-only, and creating an account
+    // is no smaller a power than editing one.
+    const registration_open = !!config_api.getConfigItem('ytdl_allow_registration');
+    const caller_may_create_users = req.isAuthenticated() && !!req.user && req.user.role === 'admin';
+
+    if (userid !== 'admin' && !registration_open && !caller_may_create_users) {
         logger.error(`Registration failed for user ${userid}. Registration is disabled.`);
         res.sendStatus(409);
         return;
@@ -3427,7 +3556,7 @@ app.post('/api/auth/register', optionalJwt, async (req, res) => {
     }
   
     res.send({
-      user: new_user
+      user: auth_api.sanitizeUserForResponse(new_user)
     });
 });
 app.post('/api/auth/login'
@@ -3448,10 +3577,97 @@ app.post('/api/auth/jwtAuth'
         , auth_api.generateJWT
         , auth_api.returnAuthResponse
 );
-app.post('/api/auth/changePassword', optionalJwt, async (req, res) => {
-    let user_uid = req.body.user_uid;
-    let password = req.body.new_password;
-    let success = await auth_api.changeUserPassword(user_uid, password);
+/*************************************************
+ * Per-user API tokens: the replacement for the
+ * Public API key.
+ *
+ * All three act on the calling account and take no
+ * uid from the request, so there is no version of
+ * these that touches somebody else's tokens.
+ *
+ * They are pointless in single-user mode, which has
+ * no accounts and asks for no credentials, so they
+ * say so rather than issuing a token that means
+ * nothing.
+ ************************************************/
+function refuseTokensInSingleUserMode(res) {
+    res.status(400).send({
+        success: false,
+        error: 'API tokens are only used in multi-user mode. Single-user mode does not require a credential.'
+    });
+}
+
+app.post('/api/listAPITokens', optionalJwt, requireAuthenticated, requireJwtForTokenManagement, async (req, res) => {
+    if (!config_api.getConfigItem('ytdl_multi_user_mode')) return refuseTokensInSingleUserMode(res);
+
+    res.send({success: true, tokens: await api_tokens_api.listTokensForUser(req.user.uid)});
+});
+
+app.post('/api/generateAPIToken', optionalJwt, requireAuthenticated, requireJwtForTokenManagement, async (req, res) => {
+    if (!config_api.getConfigItem('ytdl_multi_user_mode')) return refuseTokensInSingleUserMode(res);
+
+    const token_request = req.body || {};
+    const result = await api_tokens_api.generateTokenForUser(req.user.uid, token_request.label, token_request.type);
+    if (!result || result.error) {
+        res.status(400).send({success: false, error: result ? result.error : 'Could not generate a token'});
+        return;
+    }
+
+    // The token itself appears here and nowhere else, ever again.
+    res.send({success: true, ...result});
+});
+
+app.post('/api/revokeAPIToken', optionalJwt, requireAuthenticated, requireJwtForTokenManagement, async (req, res) => {
+    if (!config_api.getConfigItem('ytdl_multi_user_mode')) return refuseTokensInSingleUserMode(res);
+
+    const success = await api_tokens_api.revokeTokenForUser(req.user.uid, req.body && req.body.token_id);
+    res.send({success: success});
+});
+
+/*************************************************
+ * The uid used to come straight off the request
+ * body and was written without any check at all, so
+ * any account could reset any other -- including
+ * admin. A caller changes their own password and
+ * has to prove they know it; resetting somebody
+ * else's is an administrator's job.
+ ************************************************/
+app.post('/api/auth/changePassword', optionalJwt, requireAuthenticated, async (req, res) => {
+    const enforcing = !!config_api.getConfigItem('ytdl_multi_user_mode');
+    const new_password = req.body.new_password;
+
+    if (typeof new_password !== 'string' || new_password === '') {
+        res.status(400).send({success: false, error: 'A new password must be provided'});
+        return;
+    }
+
+    if (!enforcing) {
+        const success = await auth_api.changeUserPassword(req.body.user_uid, new_password);
+        res.send({success: success});
+        return;
+    }
+
+    if (!req.user) {
+        res.status(401).send({success: false, error: 'Authentication required'});
+        return;
+    }
+
+    const target_uid = req.body.user_uid ? req.body.user_uid : req.user.uid;
+    const changing_own_password = target_uid === req.user.uid;
+
+    if (!changing_own_password && req.user.role !== 'admin') {
+        logger.error(`User ${req.user.uid} tried to change the password of ${target_uid}.`);
+        res.status(403).send({success: false, error: 'Only an administrator can change another user\'s password'});
+        return;
+    }
+
+    const must_prove_current_password = changing_own_password && req.user.role !== 'admin';
+    if (must_prove_current_password && !await auth_api.verifyUserPassword(req.user.uid, req.body.current_password)) {
+        res.status(403).send({success: false, error: 'The current password is incorrect'});
+        return;
+    }
+
+    const success = await auth_api.changeUserPassword(target_uid, new_password);
     res.send({success: success});
 });
 app.post('/api/auth/adminExists', async (req, res) => {
@@ -3460,16 +3676,16 @@ app.post('/api/auth/adminExists', async (req, res) => {
 });
 
 // user management
-app.post('/api/getUsers', optionalJwt, async (req, res) => {
+app.post('/api/getUsers', optionalJwt, requireAdmin, async (req, res) => {
     let users = await db_api.getRecords('users');
-    res.send({users: users});
+    res.send({users: auth_api.sanitizeUsersForResponse(users)});
 });
-app.post('/api/getRoles', optionalJwt, async (req, res) => {
+app.post('/api/getRoles', optionalJwt, requireAdmin, async (req, res) => {
     let roles = await db_api.getRecords('roles');
     res.send({roles: roles});
 });
 
-app.post('/api/updateUser', optionalJwt, async (req, res) => {
+app.post('/api/updateUser', optionalJwt, requireAdmin, async (req, res) => {
     let change_obj = req.body.change_object;
     try {
         if (change_obj.name) {
@@ -3485,10 +3701,14 @@ app.post('/api/updateUser', optionalJwt, async (req, res) => {
     }
 });
 
-app.post('/api/deleteUser', optionalJwt, async (req, res) => {
+app.post('/api/deleteUser', optionalJwt, requireAdmin, async (req, res) => {
     let uid = req.body.uid;
     try {
         const success = await auth_api.deleteUser(uid);
+        // A token must not outlive the account it belongs to. resolveToken cleans up an
+        // orphan when it meets one, but that leaves a window where the credential is still
+        // presentable, and nothing should have to rely on being asked.
+        if (success) await api_tokens_api.revokeAllTokensForUser(uid);
         res.send({success: success});
     } catch (err) {
         logger.error(err);
@@ -3496,7 +3716,7 @@ app.post('/api/deleteUser', optionalJwt, async (req, res) => {
     }
 });
 
-app.post('/api/changeUserPermissions', optionalJwt, async (req, res) => {
+app.post('/api/changeUserPermissions', optionalJwt, requireAdmin, async (req, res) => {
     const user_uid = req.body.user_uid;
     const permission = req.body.permission;
     const new_value = req.body.new_value;
@@ -3511,7 +3731,7 @@ app.post('/api/changeUserPermissions', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/changeRolePermissions', optionalJwt, async (req, res) => {
+app.post('/api/changeRolePermissions', optionalJwt, requireAdmin, async (req, res) => {
     const role = req.body.role;
     const permission = req.body.permission;
     const new_value = req.body.new_value;
@@ -3528,7 +3748,7 @@ app.post('/api/changeRolePermissions', optionalJwt, async (req, res) => {
 
 // notifications
 
-app.post('/api/getNotifications', optionalJwt, async (req, res) => {
+app.post('/api/getNotifications', optionalJwt, requireAuthenticated, async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
 
     const notifications = await db_api.getRecords('notifications', {user_uid: uuid});
@@ -3537,7 +3757,7 @@ app.post('/api/getNotifications', optionalJwt, async (req, res) => {
 });
 
 // set notifications to read
-app.post('/api/setNotificationsToRead', optionalJwt, async (req, res) => {
+app.post('/api/setNotificationsToRead', optionalJwt, requireAuthenticated, async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
 
     const success = await db_api.updateRecords('notifications', {user_uid: uuid}, {read: true});
@@ -3545,7 +3765,7 @@ app.post('/api/setNotificationsToRead', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/deleteNotification', optionalJwt, async (req, res) => {
+app.post('/api/deleteNotification', optionalJwt, requireAuthenticated, async (req, res) => {
     const user_uid = req.isAuthenticated() ? req.user.uid : null;
     const notification_uid = req.body.uid;
     if (!notification_uid) {
@@ -3558,7 +3778,7 @@ app.post('/api/deleteNotification', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
-app.post('/api/deleteAllNotifications', optionalJwt, async (req, res) => {
+app.post('/api/deleteAllNotifications', optionalJwt, requireAuthenticated, async (req, res) => {
     const uuid = req.isAuthenticated() ? req.user.uid : null;
 
     const success = await db_api.removeAllRecords('notifications', {user_uid: uuid});
@@ -3566,12 +3786,50 @@ app.post('/api/deleteAllNotifications', optionalJwt, async (req, res) => {
     res.send({success: success});
 });
 
+/*************************************************
+ * Telegram's webhook. It was reachable by anybody
+ * who knew the URL: no check that Telegram sent it,
+ * none that the integration was even switched on,
+ * and the user_uid it queued downloads against came
+ * straight off the query string.
+ *
+ * The secret header is what proves the caller is
+ * Telegram. Once it matches, the query string is
+ * trustworthy too -- the webhook URL, and therefore
+ * the uid in it, is configured by the administrator
+ * on Telegram's side.
+ ************************************************/
 app.post('/api/telegramRequest', async (req, res) => {
+    if (!config_api.getConfigItem('ytdl_use_telegram_API')) {
+        logger.error('Rejecting a Telegram request: the Telegram integration is disabled.');
+        res.sendStatus(404);
+        return;
+    }
+
+    const expected_secret = config_api.getConfigItem('ytdl_telegram_webhook_secret');
+    if (!expected_secret || !utils.timingSafeEquals(req.get('X-Telegram-Bot-Api-Secret-Token'), expected_secret)) {
+        logger.error('Rejecting a Telegram request: the webhook secret did not match.');
+        res.sendStatus(401);
+        return;
+    }
+
     if (!req.body.message || !req.body.message.text) {
         logger.error('Invalid Telegram request received!');
         res.sendStatus(400);
         return;
     }
+
+    // The secret proves Telegram delivered this; it says nothing about who typed it.
+    // Anybody who can find the bot can message it, so the chat has to match the one that
+    // was configured.
+    const configured_chat_id = config_api.getConfigItem('ytdl_telegram_chat_id');
+    const message_chat_id = req.body.message.chat && req.body.message.chat.id;
+    if (!configured_chat_id || `${message_chat_id}` !== `${configured_chat_id}`) {
+        logger.error(`Rejecting a Telegram request from chat ${message_chat_id}: it is not the configured chat.`);
+        res.sendStatus(403);
+        return;
+    }
+
     const text = req.body.message.text;
     const regex_exp = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)?/gi;
     const url_regex = new RegExp(regex_exp);
@@ -3590,7 +3848,14 @@ app.post('/api/telegramRequest', async (req, res) => {
             return;
         }
 
-        downloader_api.createDownload(parsed_url.toString(), 'video', {}, req.query.user_uid ? req.query.user_uid : null);
+        const requested_user_uid = req.query.user_uid ? `${req.query.user_uid}` : null;
+        if (requested_user_uid && !await db_api.getRecord('users', {uid: requested_user_uid})) {
+            logger.error(`Rejecting a Telegram request: there is no user '${requested_user_uid}'.`);
+            res.sendStatus(400);
+            return;
+        }
+
+        downloader_api.createDownload(parsed_url.toString(), 'video', {}, requested_user_uid);
         res.sendStatus(200);
     } else {
         logger.error('Invalid Telegram request received! Make sure you only send a valid URL.');
@@ -3601,7 +3866,7 @@ app.post('/api/telegramRequest', async (req, res) => {
 
 // rss feed
 
-app.get('/api/rss', async function (req, res) {
+app.get('/api/rss', optionalJwt, requireAuthenticated, async function (req, res) {
     if (!config_api.getConfigItem('ytdl_enable_rss_feed')) {
         logger.error('RSS feed is disabled! It must be enabled in the settings before it can be generated.');
         res.sendStatus(403);
@@ -3620,7 +3885,9 @@ app.get('/api/rss', async function (req, res) {
             ? `${req.query.category_filter_uids}`.split(',').map(category_uid => decodeURIComponent(category_uid))
             : null;
     const sub_id = req.query.sub_id ? decodeURIComponent(req.query.sub_id) : null;
-    const uuid = req.query.uuid ? decodeURIComponent(req.query.uuid) : null;
+    // The credential, not a caller-supplied uid, decides whose feed this is. In
+    // single-user mode the guard is intentionally inert and records have no owner.
+    const uuid = req.isAuthenticated() ? req.user.uid : null;
 
     const {files} = await files_api.getAllFiles(sort, range, text_search, file_type_filter, favorite_filter, sub_id, uuid, category_filter_uids);
 

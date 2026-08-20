@@ -106,6 +106,35 @@ const tables = {
             key: 'text'
         }
     },
+    /*************************************************
+     * Per-user API tokens.
+     *
+     * Kept in their own table rather than on the user
+     * record so a token can be looked up by its hash
+     * directly. Scanning every user on every API
+     * request would work at self-hosted sizes and
+     * would still be the wrong shape.
+     *
+     * Only the hash is stored. The token itself is
+     * shown once, at generation, and cannot be
+     * recovered afterwards -- a table anyone can read
+     * with a database client should not be a list of
+     * working credentials.
+     ************************************************/
+    api_tokens: {
+        name: 'api_tokens',
+        primary_key: 'id',
+        field_types: {
+            id: 'text',
+            hash: 'text',
+            user_uid: 'text',
+            type: 'text'
+        },
+        indexes: [
+            { keys: { hash: 1 } },
+            { keys: { user_uid: 1 } }
+        ]
+    },
     users: {
         name: 'users',
         primary_key: 'uid',
@@ -596,9 +625,12 @@ exports._connectToDB = async (custom_connection_string = null, custom_db_type = 
     }
 }
 
-exports.setVideoProperty = async (file_uid, assignment_obj) => {
-    // TODO: check if video exists, throw error if not
-    await exports.updateRecord('files', {uid: file_uid}, assignment_obj);
+exports.setVideoProperty = async (file_uid, assignment_obj, user_uid = null) => {
+    // Callers were already passing an owner and a sub id that this signature never
+    // accepted, so every write matched on the file uid alone.
+    const filter_obj = {uid: file_uid};
+    if (user_uid && config_api.getConfigItem('ytdl_multi_user_mode')) filter_obj['user_uid'] = user_uid;
+    await exports.updateRecord('files', filter_obj, assignment_obj);
 }
 
 exports.getFileDirectoriesAndDBs = async () => {

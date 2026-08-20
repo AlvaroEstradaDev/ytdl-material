@@ -146,14 +146,6 @@ exports.CONFIG_ITEMS = {
     },
 
     // API
-    'ytdl_use_api_key': {
-        'key': 'ytdl_use_api_key',
-        'path': 'YtdlMaterial.API.use_API_key'
-    },
-    'ytdl_api_key': {
-        'key': 'ytdl_api_key',
-        'path': 'YtdlMaterial.API.API_key'
-    },
     'ytdl_enable_documentation_api': {
         'key': 'ytdl_enable_documentation_api',
         'path': 'YtdlMaterial.API.enable_documentation_api'
@@ -213,6 +205,10 @@ exports.CONFIG_ITEMS = {
     'ytdl_telegram_webhook_proxy': {
         'key': 'ytdl_telegram_webhook_proxy',
         'path': 'YtdlMaterial.API.telegram_webhook_proxy'
+    },
+    'ytdl_telegram_webhook_secret': {
+        'key': 'ytdl_telegram_webhook_secret',
+        'path': 'YtdlMaterial.API.telegram_webhook_secret'
     },
     'ytdl_webhook_url': {
         'key': 'ytdl_webhook_url',

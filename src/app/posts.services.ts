@@ -22,7 +22,6 @@ import {
     DownloadArchiveRequest,
     DownloadFileRequest,
     FileType,
-    GenerateNewApiKeyResponse,
     GetAllDownloadsResponse,
     GetAllFilesResponse,
     GetAllSubscriptionsResponse,
@@ -177,7 +176,6 @@ export class PostsService {
     sidepanel_mode: MatDrawerMode = 'over';
 
     // auth
-    auth_token = '4241b401-7236-493e-92b5-b72696b9d853';
     httpOptions: {
         params: HttpParams
     };
@@ -228,7 +226,7 @@ export class PostsService {
             this.path = !environment.codespaces ? 'http://localhost:17442/api/' : `${window.location.origin.replace('4200', '17442')}/api/`;
         }
 
-        this.http_params = `apiKey=${this.auth_token}`
+        this.http_params = ''
 
         this.httpOptions = {
             params: new HttpParams({
@@ -339,7 +337,7 @@ export class PostsService {
         return this.http.get(url + 'geturl');
     }
 
-    reloadConfig() {
+    reloadConfig(onSettled: () => void = null) {
         this.getConfig().subscribe(res => {
             const result = !this.debugMode ? res['config_file'] : res;
             if (result) {
@@ -349,6 +347,10 @@ export class PostsService {
                 this.setPageTitle();
                 this.config_reloaded.next(true);
             }
+            if (onSettled) { onSettled(); }
+        }, () => {
+            // Still settle on failure, or nothing that waits on the service ever starts.
+            if (onSettled) { onSettled(); }
         });
     }
 
@@ -606,8 +608,17 @@ export class PostsService {
         return this.http.post<SuccessObject>(this.path + 'clearAllLogs', {}, this.httpOptions);
     }
 
-    generateNewAPIKey() {
-        return this.http.post<GenerateNewApiKeyResponse>(this.path + 'generateNewAPIKey', {}, this.httpOptions);
+    // Per-user API tokens. All three act on the calling account; none of them takes a uid.
+    listAPITokens() {
+        return this.http.post<{success: boolean, tokens: {id: string, label: string, type: 'api' | 'rss', created: number, last_used: number | null}[]}>(this.path + 'listAPITokens', {}, this.httpOptions);
+    }
+
+    generateAPIToken(label: string, type: 'api' | 'rss' = 'api') {
+        return this.http.post<{success: boolean, token?: string, id?: string, label?: string, type?: 'api' | 'rss', created?: number, error?: string}>(this.path + 'generateAPIToken', {label: label, type: type}, this.httpOptions);
+    }
+
+    revokeAPIToken(token_id: string) {
+        return this.http.post<{success: boolean}>(this.path + 'revokeAPIToken', {token_id: token_id}, this.httpOptions);
     }
 
     enableSharing(uid: string, is_playlist: boolean) {
@@ -637,8 +648,8 @@ export class PostsService {
         return this.http.post<GetPlaylistsRequest>(this.path + 'getPlaylists', {include_categories: include_categories}, this.httpOptions);
     }
 
-    incrementViewCount(file_uid, sub_id, uuid) {
-        const body: IncrementViewCountRequest = {file_uid: file_uid, sub_id: sub_id, uuid: uuid};
+    incrementViewCount(file_uid, sub_id, uuid, playlist_id = null) {
+        const body: IncrementViewCountRequest = {file_uid: file_uid, sub_id: sub_id, uuid: uuid, playlist_id: playlist_id};
         return this.http.post<SuccessObject>(this.path + 'incrementViewCount', body, this.httpOptions);
     }
 
@@ -868,13 +879,19 @@ export class PostsService {
         localStorage.setItem('jwt_token', this.token);
         this.httpOptions.params = this.httpOptions.params.set('jwt', this.token);
 
-        this.setInitialized();
-        // needed to re-initialize parts of app after login
-        this.config_reloaded.next(true);
+        // Refetch *before* declaring the service ready, rather than alongside it. The
+        // config loaded during bootstrap was fetched anonymously, so in multi-user mode
+        // it is the cut-down copy the server hands out before login. Anything gated on
+        // service_initialized -- the settings page above all, which copies the config and
+        // submits the whole document back -- would otherwise race the replacement and
+        // could win.
+        this.reloadConfig(() => {
+            this.setInitialized();
 
-        if (this.router.url.startsWith('/login')) {
-            this.router.navigateByUrl(redirect_path || '/home');
-        }
+            if (this.router.url.startsWith('/login')) {
+                this.router.navigateByUrl(redirect_path || '/home');
+            }
+        });
     }
 
     // user methods
@@ -1019,7 +1036,7 @@ export class PostsService {
 
     resetHttpParams() {
         // resets http params
-        this.http_params = `apiKey=${this.auth_token}`
+        this.http_params = ''
 
         this.httpOptions = {
             params: new HttpParams({
@@ -1088,8 +1105,9 @@ export class PostsService {
         return this.http.post<SuccessObject>(this.path + 'deleteUser', body, this.httpOptions);
     }
 
-    changeUserPassword(user_uid, new_password) {
-        return this.http.post(this.path + 'auth/changePassword', {user_uid: user_uid, new_password: new_password}, this.httpOptions);
+    changeUserPassword(user_uid, new_password, current_password = null) {
+        return this.http.post(this.path + 'auth/changePassword',
+            {user_uid: user_uid, new_password: new_password, current_password: current_password}, this.httpOptions);
     }
 
     getUsers(): Observable<GetUsersResponse> {
