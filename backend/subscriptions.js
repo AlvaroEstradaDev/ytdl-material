@@ -1751,7 +1751,8 @@ exports.cancelCheckSubscription = async (sub_id, user_uid = null) => {
     // if check is ongoing
     if (sub['child_process']) {
         const child_process = sub['child_process'];
-        youtubedl_api.killYoutubeDLProcess(child_process);
+        // Awaited so the check is really dead before the record below says it is cancelled.
+        await youtubedl_api.killYoutubeDLProcess(child_process);
     }
 
     // cancel activate video downloads
