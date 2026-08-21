@@ -2816,37 +2816,51 @@ app.get('/api/stream', optionalJwt, requireAuthenticatedOrShared, async (req, re
     const mimetype = mime.lookup(file_path) || (type === 'audio' ? 'audio/mpeg' : 'video/mp4');
     const stat = fs.statSync(file_path);
     const fileSize = stat.size;
-    const range = req.headers.range;
-    if (range) {
-        const parts = range.replace(/bytes=/, "").split("-")
-        const start = parseInt(parts[0], 10)
-        const end = parts[1]
-        ? parseInt(parts[1], 10)
-        : fileSize-1
-        const chunksize = (end-start)+1
-        const file = fs.createReadStream(file_path, {start, end})
-        if (config_api.descriptors[uid]) config_api.descriptors[uid].push(file);
-        else                            config_api.descriptors[uid] = [file];
-        file.on('close', function() {
-            let index = config_api.descriptors[uid].indexOf(file);
-            config_api.descriptors[uid].splice(index, 1);
-            logger.debug('Successfully closed stream and removed file reference.');
+    const requested_range = utils.parseByteRange(req.headers.range, fileSize);
+
+    if (requested_range && requested_range.satisfiable === false) {
+        // Tells the client how big the file actually is, which is how it recovers: an
+        // unsatisfiable range used to be answered with a 206 whose Content-Range named
+        // bytes beyond the end of the file, followed by nothing at all.
+        res.writeHead(416, {
+            'Content-Range': `bytes */${fileSize}`,
+            'Accept-Ranges': 'bytes'
         });
+        res.end();
+        return;
+    }
+
+    // A HEAD asks what a GET would return, so it gets the same headers and no body. It
+    // used to open a read stream and register a descriptor for bytes node was going to
+    // discard anyway.
+    const body_wanted = req.method !== 'HEAD';
+
+    if (requested_range) {
+        const {start, end, length} = requested_range;
         head = {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
-        'Content-Length': chunksize,
+        'Content-Length': length,
         'Content-Type': mimetype,
         }
         res.writeHead(206, head);
-        file.pipe(res);
+        if (!body_wanted) {
+            res.end();
+            return;
+        }
+        utils.pipeMediaFileToResponse(fs.createReadStream(file_path, {start, end}), res, uid);
     } else {
         head = {
         'Content-Length': fileSize,
+        'Accept-Ranges': 'bytes',
         'Content-Type': mimetype,
         }
         res.writeHead(200, head)
-        fs.createReadStream(file_path).pipe(res)
+        if (!body_wanted) {
+            res.end();
+            return;
+        }
+        utils.pipeMediaFileToResponse(fs.createReadStream(file_path), res, uid);
     }
 });
 

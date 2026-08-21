@@ -2,7 +2,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const crypto = require('crypto');
 const { v4: uuid } = require('uuid');
-const { Readable } = require('stream');
+const { Readable, pipeline } = require('stream');
 const { ZipArchive } = require('archiver');
 const ProgressBar = require('progress');
 const winston = require('winston');
@@ -1361,4 +1361,127 @@ exports.isAllowedDownloadURL = (candidate_url) => {
     } catch {
         return false;
     }
+}
+
+/*************************************************
+ * Parses one HTTP byte range against a known file
+ * size, per RFC 9110 section 14.
+ *
+ * The handler this replaces got the browser case
+ * right and every other case wrong, which is why
+ * nothing noticed: a browser sends one polite
+ * 'bytes=0-' and never asks again. Anything driving
+ * a remote file with ffmpeg does not behave that
+ * way -- it reads the tail of the container to find
+ * an index, and it seeks speculatively past the end
+ * -- and both of those used to hang the connection
+ * or throw.
+ *
+ * Returns one of:
+ *   null                     no range header, or one
+ *                            to ignore and answer 200
+ *   {satisfiable: false}     answer 416
+ *   {start, end, length}     answer 206, inclusive
+ *
+ * An unparseable header is deliberately ignored
+ * rather than refused. RFC 9110 says a recipient
+ * that does not understand a Range header must
+ * treat the request as though it had none, and a
+ * player that sends something odd is better served
+ * the whole file than a 500.
+ ************************************************/
+exports.parseByteRange = (range_header, file_size) => {
+    if (typeof range_header !== 'string') return null;
+    if (!Number.isInteger(file_size) || file_size < 0) return null;
+
+    // Only 'bytes' is defined, and only a single range is answered here. A multi-range
+    // request is answered with the whole file rather than a multipart body.
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range_header.trim());
+    if (!match) return null;
+
+    const [, raw_start, raw_end] = match;
+    if (raw_start === '' && raw_end === '') return null;
+
+    // An empty file cannot satisfy any range, including the suffix form.
+    if (file_size === 0) return {satisfiable: false};
+
+    let start;
+    let end;
+    if (raw_start === '') {
+        // Suffix form: 'bytes=-500' is the last 500 bytes, not 'from 0 to 500'. Asking for
+        // more than the file holds is satisfiable and means the whole file.
+        const suffix_length = parseInt(raw_end, 10);
+        if (suffix_length === 0) return {satisfiable: false};
+        start = Math.max(0, file_size - suffix_length);
+        end = file_size - 1;
+    } else {
+        start = parseInt(raw_start, 10);
+        // Clamped, because the read stream stops at EOF whatever was asked for. Without
+        // this the Content-Length promised more bytes than could ever arrive, and the
+        // client waited for the remainder until it gave up.
+        end = raw_end === '' ? file_size - 1 : Math.min(parseInt(raw_end, 10), file_size - 1);
+    }
+
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (start >= file_size || start > end) return {satisfiable: false};
+
+    return {start: start, end: end, length: (end - start) + 1};
+}
+
+/*************************************************
+ * Sends an open read stream to an HTTP response,
+ * and takes responsibility for closing it.
+ *
+ * Two things this replaces a bare .pipe() for.
+ *
+ * A read error had no listener. fs.existsSync runs
+ * before the stream is opened, so a file deleted in
+ * between -- which this application does to its own
+ * files, during playback -- emitted 'error' on an
+ * emitter nobody was listening to. That is an
+ * uncaught exception, and it takes the server down
+ * rather than the request.
+ *
+ * .pipe() also does not destroy the source when the
+ * destination goes away, and a client that walks
+ * away mid-response is not an edge case here: it is
+ * how a player seeks. Every abandoned seek left an
+ * open descriptor and an entry in the registry
+ * below, neither of which was ever released.
+ *
+ * The registry is what lets a delete release its
+ * file locks first (see files.js), so an entry that
+ * outlives its stream is not merely garbage -- it
+ * is a lock nobody can find their way back to.
+ ************************************************/
+exports.pipeMediaFileToResponse = (file, res, uid) => {
+    if (config_api.descriptors[uid]) config_api.descriptors[uid].push(file);
+    else                             config_api.descriptors[uid] = [file];
+
+    const forgetDescriptor = () => {
+        const open_descriptors = config_api.descriptors[uid];
+        if (!open_descriptors) return;
+        const index = open_descriptors.indexOf(file);
+        // splice(-1, 1) drops the last element, so an entry already removed used to take
+        // an unrelated live stream out of the registry with it.
+        if (index !== -1) open_descriptors.splice(index, 1);
+        // Otherwise the object keeps one empty array per uid ever streamed.
+        if (!open_descriptors.length) delete config_api.descriptors[uid];
+    };
+
+    pipeline(file, res, (err) => {
+        forgetDescriptor();
+        if (!err) {
+            logger.debug('Successfully closed stream and removed file reference.');
+            return;
+        }
+        // A client hanging up is ordinary -- a player seeking abandons the response it
+        // asked for -- so it is not logged as a failure. Anything else is a real read
+        // error, and the response is already committed by the time it surfaces.
+        if (err.code === 'ERR_STREAM_PREMATURE_CLOSE' || err.code === 'ECONNRESET') {
+            logger.debug(`Client closed the connection while streaming ${uid}.`);
+            return;
+        }
+        logger.error(`Error while streaming ${uid}: ${err.message}`);
+    });
 }
