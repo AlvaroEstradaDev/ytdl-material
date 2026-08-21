@@ -397,6 +397,13 @@ exports.getAllYoutubeDLDetails = () => {
 
 exports.killYoutubeDLProcess = async (child_process) => {
     kill(child_process.pid, 'SIGKILL');
+    // Wait for the OS to actually reap the process before returning. Firing the signal
+    // and moving on (as this used to do) can abandon the ChildProcess handle before its
+    // 'exit'/'close' event is dispatched, which leaves a zombie behind until this Node
+    // process itself exits.
+    if (child_process && typeof child_process.once === 'function') {
+        await new Promise(resolve => child_process.once('close', resolve));
+    }
 }
 
 exports.checkForYoutubeDLUpdate = async (youtubedl_fork = config_api.getConfigItem('ytdl_default_downloader')) => {
