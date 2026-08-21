@@ -1519,7 +1519,7 @@ exports.pauseDownload = async (download_uid) => {
         logger.info(`Pausing download ${download_uid}`);
     }
 
-    killActiveDownload(download);
+    await killActiveDownload(download);
     return await db_api.updateRecord('download_queue', {uid: download_uid}, getPausedDownloadUpdate(download));
 }
 
@@ -1577,7 +1577,7 @@ exports.cancelDownload = async (download_uid) => {
         logger.info(`Cancelling download ${download_uid}`);
     }
 
-    killActiveDownload(download);
+    await killActiveDownload(download);
     await handleDownloadError(download_uid, 'Cancelled', 'cancelled');
     return await db_api.updateRecord('download_queue', {uid: download_uid}, {cancelled: true});
 }
@@ -1914,10 +1914,10 @@ async function checkDownloads() {
 }
 exports.checkDownloads = checkDownloads;
 
-function killActiveDownload(download) {
+async function killActiveDownload(download) {
     const child_process = download_to_child_process[download['uid']];
     if (download['step_index'] === 2 && child_process) {
-        youtubedl_api.killYoutubeDLProcess(child_process);
+        await youtubedl_api.killYoutubeDLProcess(child_process);
         delete download_to_child_process[download['uid']];
     }
 }

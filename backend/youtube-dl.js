@@ -13,6 +13,7 @@ const config_api = require('./config.js');
 
 const is_windows = process.platform === 'win32';
 const STREAMING_ERROR_BUFFER_LIMIT = 20000;
+const KILL_PROCESS_TIMEOUT_MS = 10000;
 const DEFAULT_YTDLP_IMPERSONATION_PATH = path.join('appdata', 'ytdlp-impersonation', 'python');
 
 // The version check and the download must read the same source. Tags are created before
@@ -395,15 +396,49 @@ exports.getAllYoutubeDLDetails = () => {
     );
 }
 
-exports.killYoutubeDLProcess = async (child_process) => {
-    kill(child_process.pid, 'SIGKILL');
-    // Wait for the OS to actually reap the process before returning. Firing the signal
-    // and moving on (as this used to do) can abandon the ChildProcess handle before its
-    // 'exit'/'close' event is dispatched, which leaves a zombie behind until this Node
-    // process itself exits.
-    if (child_process && typeof child_process.once === 'function') {
-        await new Promise(resolve => child_process.once('close', resolve));
+// tree-kill walks the process tree with `ps` before it delivers a single signal, so kill()
+// returning tells us nothing -- the child is usually still running at that point. Callers
+// cancel a check and immediately drop their reference to the process, so returning early
+// leaves yt-dlp writing to a download that has already been marked cancelled.
+exports.killYoutubeDLProcess = async (child_process, timeout_ms = KILL_PROCESS_TIMEOUT_MS) => {
+    if (!child_process) return;
+
+    // A remote db round-trips a subscription's child_process into a plain {pid} object, so the
+    // pid is all we can rely on. Still kill it -- there is just no handle left to wait on.
+    const pid = parseInt(child_process['pid'], 10);
+    if (Number.isNaN(pid)) {
+        logger.warn('Skipping kill of youtube-dl process: no pid was recorded for it.');
+        return;
     }
+
+    const live_handle = typeof child_process.once === 'function';
+    const already_exited = live_handle && (child_process.exitCode !== null || child_process.signalCode !== null);
+    // Registered before the kill so a child that dies in between cannot be missed. Waiting on a
+    // 'close' that has already fired would never resolve, hence the already_exited check.
+    const closed = live_handle && !already_exited
+        ? new Promise(resolve => child_process.once('close', resolve))
+        : null;
+
+    await new Promise(resolve => kill(pid, 'SIGKILL', (err) => {
+        // tree-kill swallows ESRCH itself. Anything else -- EPERM, a `ps` that failed to run --
+        // would otherwise throw straight out of here and reject on callers that only cancel.
+        if (err) logger.warn(`Failed to fully kill youtube-dl process ${pid}: ${err.message}`);
+        resolve();
+    }));
+
+    if (!closed) return;
+
+    let timeout_handle = null;
+    const timed_out = await Promise.race([
+        closed.then(() => false),
+        new Promise(resolve => { timeout_handle = setTimeout(() => resolve(true), timeout_ms); })
+    ]);
+    clearTimeout(timeout_handle);
+
+    // A child stuck in uninterruptible I/O can outlive its own SIGKILL, and a cancel request
+    // that never returns is worse than a late reap. Node keeps the process handle registered
+    // either way, so it still gets reaped once the kernel lets the process go.
+    if (timed_out) logger.warn(`Timed out waiting for youtube-dl process ${pid} to exit after SIGKILL.`);
 }
 
 exports.checkForYoutubeDLUpdate = async (youtubedl_fork = config_api.getConfigItem('ytdl_default_downloader')) => {
