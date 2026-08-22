@@ -373,6 +373,10 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_default_downloader',
         'path': 'YtdlMaterial.Advanced.default_downloader'
     },
+    'ytdl_ytdlp_update_channel': {
+        'key': 'ytdl_ytdlp_update_channel',
+        'path': 'YtdlMaterial.Advanced.ytdlp_update_channel'
+    },
     'ytdl_use_default_downloading_agent': {
         'key': 'ytdl_use_default_downloading_agent',
         'path': 'YtdlMaterial.Advanced.use_default_downloading_agent'
@@ -499,4 +503,4 @@ exports.SUBSCRIPTION_BACKUP_PATH = 'subscription_backup.json'
 // we're using a Set here for performance
 exports.YTDL_ARGS_WITH_VALUES = new Set(YTDL_ARGS_WITH_VALUES);
 
-exports.CURRENT_VERSION = 'v1.0.9';
+exports.CURRENT_VERSION = 'v1.0.10';

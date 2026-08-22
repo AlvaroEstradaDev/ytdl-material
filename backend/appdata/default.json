@@ -122,7 +122,8 @@
       "multi_user_mode": false,
       "use_cookies": false,
       "jwt_expiration": 86400,
-      "logger_level": "info"
+      "logger_level": "info",
+      "ytdlp_update_channel": "stable"
     }
   }
 }

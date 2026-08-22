@@ -101,6 +101,7 @@ Env-backed settings are always written into `appdata/default.json` on startup. T
 
 Anything you set there takes precedence and is never overwritten. See the [wiki](https://github.com/voc0der/ytdl-material/wiki#environment-specific-guideshelp) for how to pick a client.
 * `ytdl_js_runtimes`: pin the JavaScript runtime yt-dlp uses to solve YouTube's JS challenge, passed through as `--js-runtimes` (for example `deno` or `node`). Leave empty to let yt-dlp auto-detect an installed runtime, which is the default and is recommended. Pinning a runtime that is not installed causes downloads to fail with `unable to download video data: HTTP Error 403: Forbidden`; run `yt-dlp -v` and check the `JS Challenge Providers` line to see which runtimes are actually available (default empty)
+* `ytdl_ytdlp_update_channel`: which yt-dlp release channel to download and auto-update from. One of `'stable'` (default), `'nightly'`, or `'master'`. Also selectable in Settings under the Advanced tab. Only affects the `yt-dlp` downloader. This is separate from the ytdl-material image tag: `voc0der/ytdl-material:nightly` still downloads stable yt-dlp unless this is set. An unrecognized value is rejected and the update is skipped, leaving the existing binary in place. Restart the container after changing it. With `ytdl_use_ytdlp_impersonation` enabled the entrypoint installs the matching channel from PyPI instead (`--pre` for nightly; PyPI has no `master`, so that falls back to nightly)
 
 ## Hardware Acceleration (Transcoding)
 
@@ -126,7 +127,8 @@ Each crop logs the encoder and whether decoding is on the GPU. At `debug` log le
 Notes:
 
 * Hardware acceleration requires the amd64 or arm64 image. The armhf/armel images ship a software-only ffmpeg build.
-* For `'vaapi'` and `'qsv'`, the entrypoint installs the userspace GPU drivers on first start (requires the container to start as root, the default, and network access). NVENC and AMF runtimes are provided by the host instead.
+* For `'vaapi'` and `'qsv'`, the entrypoint installs `libva-drm2` and the userspace GPU drivers on first start (requires the container to start as root, the default, and network access). These packages are not installed when hardware transcoding is disabled. NVENC and AMF runtimes are provided by the host instead.
+* After selecting VAAPI or QSV in the UI for the first time, restart the container once so the root entrypoint can install the required userspace packages before the next flight test.
 * Hardware encoding is applied to video files in h264-compatible containers (mp4, mkv, mov, ts). Other formats keep using software encoding.
 
 ### VAAPI / QSV (Intel and AMD GPUs)
