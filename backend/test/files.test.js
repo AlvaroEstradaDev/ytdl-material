@@ -1,10 +1,34 @@
 /* eslint-disable no-undef */
-const { assert, fs, path, exec, utils, files_api, config_api, db_api } = require('./test-shared');
+const { assert, fs, path, exec, utils, files_api, config_api, db_api, useTemporaryMediaRoots } = require('./test-shared');
 
 describe('Files', function() {
-    const fixture_dir = path.join(__dirname, 'tmp-files-test');
-    const fixture_file_path = path.join(fixture_dir, 'chapter-video.mp4');
-    const fixture_info_path = path.join(fixture_dir, 'chapter-video.info.json');
+    /*************************************************
+     * These fixtures have to sit inside a media root
+     * -- deletion refuses a path outside them, so a
+     * fixture parked elsewhere would exercise the
+     * refusal rather than the behaviour under test --
+     * and they are created and recursively removed.
+     *
+     * So the roots are redirected to a throwaway
+     * directory rather than the configured ones. A
+     * test run must not be able to delete somebody's
+     * actual media.
+     ************************************************/
+    let media = null;
+    let fixture_dir = null;
+    let fixture_file_path = null;
+    let fixture_info_path = null;
+
+    before(function() {
+        media = useTemporaryMediaRoots();
+        fixture_dir = path.join(media.video, 'tmp-files-test');
+        fixture_file_path = path.join(fixture_dir, 'chapter-video.mp4');
+        fixture_info_path = path.join(fixture_dir, 'chapter-video.info.json');
+    });
+
+    after(function() {
+        media.restore();
+    });
 
     beforeEach(async function() {
         await fs.ensureDir(fixture_dir);
@@ -377,6 +401,10 @@ describe('Files', function() {
         const original_multi_user_mode = config_api.getConfigItem('ytdl_multi_user_mode');
         const original_audio_folder_path = config_api.getConfigItem('ytdl_audio_folder_path');
         const original_video_folder_path = config_api.getConfigItem('ytdl_video_folder_path');
+        // Overridden alongside the others so the fixture layout matches what the config
+        // says: deletion refuses a path outside the configured roots, and the
+        // subscription orphan below lives under this one.
+        const original_subscriptions_base_path = config_api.getConfigItem('ytdl_subscriptions_base_path');
         const legacy_audio_dir = path.join(fixture_dir, 'legacy-audio');
         const legacy_video_dir = path.join(fixture_dir, 'legacy-video');
         const user_video_dir = path.join(fixture_dir, 'users', 'user-1', 'video');
@@ -392,6 +420,7 @@ describe('Files', function() {
             config_api.setConfigItem('ytdl_multi_user_mode', true);
             config_api.setConfigItem('ytdl_audio_folder_path', legacy_audio_dir);
             config_api.setConfigItem('ytdl_video_folder_path', legacy_video_dir);
+            config_api.setConfigItem('ytdl_subscriptions_base_path', path.join(fixture_dir, 'subscriptions'));
             await fs.outputFile(legacy_orphan_path, 'legacy orphan media');
             await fs.outputFile(legacy_info_path, '{}');
             await fs.outputFile(subscription_orphan_path, 'subscription orphan media');
@@ -434,6 +463,7 @@ describe('Files', function() {
             config_api.setConfigItem('ytdl_multi_user_mode', original_multi_user_mode);
             config_api.setConfigItem('ytdl_audio_folder_path', original_audio_folder_path);
             config_api.setConfigItem('ytdl_video_folder_path', original_video_folder_path);
+            config_api.setConfigItem('ytdl_subscriptions_base_path', original_subscriptions_base_path);
             db_api.getFileDirectoriesAndDBs = original_get_file_directories;
             db_api.getRecords = original_get_records;
         }
@@ -798,6 +828,79 @@ describe('Files', function() {
 
         it('allows an unknown source duration', function() {
             assert.strictEqual(files_api.validateSnipRange(5, 20, null).valid, true);
+        });
+    });
+    describe('embedded subtitle extraction', function() {
+        // Inside the throwaway media root, like the other fixtures: subtitle extraction
+        // hands the path to ffprobe and ffmpeg, and refuses one outside the media folders.
+        // Assigned in a hook rather than at describe time, because the root does not exist
+        // until the outer before() has run.
+        let subtitle_dir = null;
+        let subtitle_source_path = null;
+
+        // Builds a real video carrying one embedded English subtitle track. The extraction
+        // path shells out to ffmpeg, so there is nothing meaningful to assert against a stub.
+        beforeEach(async function() {
+            this.timeout(60000);
+            subtitle_dir = path.join(media.video, 'tmp-subtitle-test');
+            subtitle_source_path = path.join(subtitle_dir, 'subtitled.mp4');
+            await fs.ensureDir(subtitle_dir);
+            const srt_path = path.join(subtitle_dir, 'source.srt');
+            await fs.writeFile(srt_path, '1\n00:00:00,000 --> 00:00:02,000\nhello world\n\n2\n00:00:02,000 --> 00:00:03,000\nsecond line\n');
+            await exec(`ffmpeg -y -v error -f lavfi -i testsrc=duration=3:size=128x96:rate=10 -i "${srt_path}" `
+                + `-c:v libx264 -pix_fmt yuv420p -c:s mov_text -metadata:s:s:0 language=eng "${subtitle_source_path}"`);
+        });
+
+        afterEach(async function() {
+            await fs.remove(subtitle_dir);
+        });
+
+        it('extractSubtitleSidecar writes a WEBVTT sidecar for an embedded track', async function() {
+            this.timeout(60000);
+
+            const sidecar_path = await files_api.extractSubtitleSidecar(subtitle_source_path, 0);
+
+            assert.strictEqual(sidecar_path, files_api.getSubtitleSidecarPath(subtitle_source_path, 0));
+            assert.strictEqual(await fs.pathExists(sidecar_path), true);
+
+            const contents = await fs.readFile(sidecar_path, 'utf8');
+            assert.ok(contents.startsWith('WEBVTT'), `expected a WEBVTT sidecar, got: ${contents.slice(0, 40)}`);
+            assert.ok(contents.includes('hello world'), 'the sidecar should carry the embedded cue text');
+        });
+
+        it('extractSubtitleSidecar returns null and leaves nothing behind for a track that does not exist', async function() {
+            this.timeout(60000);
+
+            const sidecar_path = await files_api.extractSubtitleSidecar(subtitle_source_path, 5);
+
+            assert.strictEqual(sidecar_path, null);
+            assert.strictEqual(await fs.pathExists(files_api.getSubtitleSidecarPath(subtitle_source_path, 5)), false);
+        });
+
+        it('ensureSubtitleSidecarForFile probes the embedded track and produces its sidecar', async function() {
+            this.timeout(60000);
+
+            const sidecar_path = await files_api.ensureSubtitleSidecarForFile({
+                path: subtitle_source_path,
+                isAudio: false
+            }, 0);
+
+            assert.notStrictEqual(sidecar_path, null, 'the embedded track should be discovered by probing');
+            assert.strictEqual(await fs.pathExists(sidecar_path), true);
+            assert.ok((await fs.readFile(sidecar_path, 'utf8')).startsWith('WEBVTT'));
+        });
+
+        it('ensureSubtitleSidecarForFile returns null when the file carries no subtitle streams', async function() {
+            this.timeout(60000);
+            const bare_path = path.join(subtitle_dir, 'no-subs.mp4');
+            await exec(`ffmpeg -y -v error -f lavfi -i testsrc=duration=1:size=128x96:rate=10 -pix_fmt yuv420p "${bare_path}"`);
+
+            const sidecar_path = await files_api.ensureSubtitleSidecarForFile({
+                path: bare_path,
+                isAudio: false
+            }, 0);
+
+            assert.strictEqual(sidecar_path, null);
         });
     });
 });

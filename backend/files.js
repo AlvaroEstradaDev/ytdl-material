@@ -1,12 +1,12 @@
 const fs = require('fs-extra')
 const path = require('path')
-const ffmpeg = require('fluent-ffmpeg');
 const { v4: uuid } = require('uuid');
 
 const config_api = require('./config');
 const db_api = require('./db');
 const archive_api = require('./archive');
 const utils = require('./utils')
+const transcoding_api = require('./transcoding');
 const logger = require('./logger');
 const PLAYLIST_FILE_DELETE_BATCH_SIZE = 10;
 const FILE_LIST_MAX_RANGE_SIZE = 250;
@@ -275,11 +275,33 @@ async function deleteSidecarPaths(sidecar_paths = []) {
     return true;
 }
 
-async function deleteMediaAndSidecars(file_path, type, additional_sidecar_paths = []) {
+async function deleteMediaAndSidecars(file_path, type, additional_sidecar_paths = [], user_uid = null) {
+    /*************************************************
+     * fs.remove is recursive, and the path it is
+     * given comes out of a database record. Closing
+     * the endpoint that used to let a client write
+     * that field does nothing for rows written before
+     * it was closed, or by any other route.
+     *
+     * So the check happens here, at the sink: a
+     * regular file, inside the media folders, and --
+     * when the record has an owner -- inside that
+     * owner's own directory.
+     ************************************************/
+    if (!utils.isServableMediaFile(file_path, user_uid)) {
+        logger.error(`Refusing to delete ${file_path}: it is not a regular file inside `
+            + `${user_uid ? `${user_uid}'s media folder` : 'the configured media folders'}.`);
+        return false;
+    }
+
     const sidecar_paths = uniqueNormalizedPaths([
         ...await getExistingSidecarPaths(file_path, type),
         ...additional_sidecar_paths
-    ]);
+    ]).filter(sidecar_path => {
+        if (utils.isServableMediaFile(sidecar_path, user_uid)) return true;
+        logger.error(`Refusing to delete sidecar ${sidecar_path}: it is outside the media folders.`);
+        return false;
+    });
 
     const sidecars_deleted = await deleteSidecarPaths(sidecar_paths);
 
@@ -473,6 +495,27 @@ function getPlaybackMetadataForFile(file_obj = null) {
         };
     }
 
+    /*************************************************
+     * The .info.json this reads sits beside the
+     * stored path, so this is a filesystem read of an
+     * untrusted string and needs the same check the
+     * subtitle path got.
+     *
+     * It lives here rather than in attachFileChapters
+     * because that is not the only way in --
+     * attachFilePlaybackMetadata calls chapters
+     * before subtitles, and attachFileChaptersCollection
+     * calls it directly for every file in a listing.
+     ************************************************/
+    if (!utils.isPathInsideMediaRoots(file_obj.path, file_obj.user_uid)) {
+        logger.error(`Refusing to read playback metadata for ${file_obj.uid}: its path is outside `
+            + `its owner's media folder.`);
+        return {
+            duration: file_obj.duration,
+            chapters: []
+        };
+    }
+
     const type = file_obj.isAudio ? 'audio' : 'video';
     const metadata_json = utils.getJSON(file_obj.path, type);
     if (!metadata_json) {
@@ -544,26 +587,22 @@ async function probeEmbeddedSubtitleTracks(file_path = '') {
     if (typeof file_path !== 'string' || file_path.trim() === '') return [];
     if (!(await fs.pathExists(file_path))) return [];
 
-    return await new Promise(resolve => {
-        ffmpeg.ffprobe(file_path, (err, metadata) => {
-            if (err || !metadata || !Array.isArray(metadata.streams)) {
-                if (err) logger.debug(`Failed to probe subtitle streams for '${file_path}': ${err}`);
-                resolve([]);
-                return;
-            }
+    const streams = await transcoding_api.probeStreams(file_path);
+    if (!streams) {
+        logger.debug(`Failed to probe subtitle streams for '${file_path}'.`);
+        return [];
+    }
 
-            const subtitle_streams = metadata.streams.filter(stream => stream && stream.codec_type === 'subtitle');
-            resolve(subtitle_streams.map((stream, track_index) => {
-                const normalized_language = normalizeSubtitleLanguage(stream?.tags?.language) || 'und';
-                return {
-                    index: track_index,
-                    language: normalized_language,
-                    label: getSubtitleTrackLabel(stream, normalized_language, track_index),
-                    kind: 'subtitles',
-                    default: !!(stream?.disposition && stream.disposition.default === 1) || track_index === 0
-                };
-            }));
-        });
+    const subtitle_streams = streams.filter(stream => stream && stream.codec_type === 'subtitle');
+    return subtitle_streams.map((stream, track_index) => {
+        const normalized_language = normalizeSubtitleLanguage(stream?.tags?.language) || 'und';
+        return {
+            index: track_index,
+            language: normalized_language,
+            label: getSubtitleTrackLabel(stream, normalized_language, track_index),
+            kind: 'subtitles',
+            default: !!(stream?.disposition && stream.disposition.default === 1) || track_index === 0
+        };
     });
 }
 
@@ -609,40 +648,56 @@ async function extractSubtitleSidecar(file_path = '', subtitle_track_index = 0) 
     if (!subtitle_sidecar_path) return null;
     if (!(await fs.pathExists(file_path))) return null;
 
+    // This deletes a file and then hands ffmpeg somewhere to write. Both deserve a check of
+    // their own rather than an inherited assumption about where the media file was.
+    if (!utils.isPathInsideMediaRoots(subtitle_sidecar_path)) {
+        logger.warn(`Refusing to write a subtitle sidecar outside the media roots: ${subtitle_sidecar_path}`);
+        return null;
+    }
+
     try {
         await fs.remove(subtitle_sidecar_path);
     } catch (e) {
         logger.warn(`Failed to remove stale subtitle sidecar '${subtitle_sidecar_path}'.`);
     }
 
-    return await new Promise(resolve => {
-        ffmpeg(file_path)
-            .outputOptions(['-map', `0:s:${subtitle_track_index}`])
-            .format('webvtt')
-            .on('end', async () => {
-                try {
-                    await fs.chmod(subtitle_sidecar_path, 0o644);
-                } catch (e) {
-                    // Non-fatal.
-                }
-                resolve(subtitle_sidecar_path);
-            })
-            .on('error', async (err) => {
-                try {
-                    await fs.remove(subtitle_sidecar_path);
-                } catch (e) {
-                    // Non-fatal.
-                }
-                logger.warn(`Failed to extract subtitle sidecar for '${file_path}': ${err}`);
-                resolve(null);
-            })
-            .save(subtitle_sidecar_path);
-    });
+    const {success, error} = await transcoding_api.runFfmpeg([
+        '-y',
+        '-i', file_path,
+        '-map', `0:s:${subtitle_track_index}`,
+        '-f', 'webvtt',
+        subtitle_sidecar_path
+    ]);
+
+    if (!success) {
+        try {
+            await fs.remove(subtitle_sidecar_path);
+        } catch (e) {
+            // Non-fatal.
+        }
+        logger.warn(`Failed to extract subtitle sidecar for '${file_path}': ${error}`);
+        return null;
+    }
+
+    try {
+        await fs.chmod(subtitle_sidecar_path, 0o644);
+    } catch (e) {
+        // Non-fatal.
+    }
+    return subtitle_sidecar_path;
 }
 exports.extractSubtitleSidecar = extractSubtitleSidecar;
 
 exports.ensureSubtitleSidecarForFile = async (file_obj = null, subtitle_track_index = 0) => {
     if (!file_obj || file_obj.isAudio || !file_obj.path) return null;
+
+    // ffprobe and ffmpeg are handed this path, so it gets the same check as the endpoints
+    // that read it directly -- a regular file inside its owner's media folders.
+    if (!utils.isServableMediaFile(file_obj.path, file_obj.user_uid)) {
+        logger.error(`Refusing to extract subtitles from ${file_obj.path}: it is not a regular file `
+            + `inside its owner's media folder.`);
+        return null;
+    }
 
     const available_tracks = await getAvailableSubtitleTracks(file_obj);
     if (available_tracks.length === 0) return null;
@@ -650,6 +705,25 @@ exports.ensureSubtitleSidecarForFile = async (file_obj = null, subtitle_track_in
 
     const subtitle_sidecar_path = getSubtitleSidecarPath(file_obj.path, subtitle_track_index);
     if (!subtitle_sidecar_path) return null;
+
+    /*************************************************
+     * Checked before an existing sidecar is returned,
+     * not only before a new one is written.
+     *
+     * An existing sidecar was handed straight back
+     * for /api/streamSubtitle to serve. Deriving its
+     * path as a sibling of the media file settles
+     * where the name is, not where a symlink at that
+     * name points, so a .player-subtitles.vtt link
+     * beside a perfectly legitimate media file was
+     * served from wherever it pointed.
+     ************************************************/
+    if (!utils.isPathInsideMediaRoots(subtitle_sidecar_path, file_obj.user_uid)) {
+        logger.error(`Refusing the subtitle sidecar for ${file_obj.uid}: ${subtitle_sidecar_path} `
+            + `resolves outside its owner's media folder.`);
+        return null;
+    }
+
     if (await fs.pathExists(subtitle_sidecar_path)) return subtitle_sidecar_path;
 
     return await extractSubtitleSidecar(file_obj.path, subtitle_track_index);
@@ -657,6 +731,28 @@ exports.ensureSubtitleSidecarForFile = async (file_obj = null, subtitle_track_in
 
 exports.attachFileSubtitles = async (file_obj = null, ensure_sidecar = false) => {
     if (!file_obj) return file_obj;
+
+    /*************************************************
+     * Checked here rather than only inside
+     * ensureSubtitleSidecarForFile: discovering the
+     * tracks already reads sidecar files next to the
+     * stored path and shells out to ffprobe, so by
+     * the time the deeper check ran, a record left
+     * pointing somewhere it should not had already
+     * reached the filesystem.
+     ************************************************/
+    // Containment rather than the stricter regular-file check: a record whose media has
+    // been deleted still has subtitle metadata worth reading, and it is where the path
+    // points that matters here. ensureSubtitleSidecarForFile still demands a real file
+    // before anything is handed to ffprobe or ffmpeg.
+    if (file_obj.path && !utils.isPathInsideMediaRoots(file_obj.path, file_obj.user_uid)) {
+        logger.error(`Refusing to read subtitles for ${file_obj.uid}: its path is outside `
+            + `its owner's media folder.`);
+        return {
+            ...file_obj,
+            subtitles: []
+        };
+    }
 
     const available_tracks = await getAvailableSubtitleTracks(file_obj);
     if (available_tracks.length === 0) {
@@ -1498,15 +1594,61 @@ exports.getPlaylist = async (playlist_id, user_uid = null, require_sharing = fal
     return playlist;
 }
 
+/*************************************************
+ * Fields the playlist editor may change. The whole
+ * client object used to be written straight to the
+ * record, so a caller could set user_uid,
+ * sharingEnabled and uids directly -- handing
+ * themselves somebody else's playlist, turning on
+ * sharing without the sharing permission, or
+ * building a shared playlist out of another user's
+ * file uids.
+ ************************************************/
+const EDITABLE_PLAYLIST_FIELDS = ['name', 'uids'];
+
 exports.updatePlaylist = async (playlist, user_uid = null) => {
-    let playlistID = playlist.id;
-    const filter_obj = {id: playlistID};
+    if (!playlist || typeof playlist !== 'object') return false;
+
+    const filter_obj = {id: playlist.id};
     if (shouldRestrictToUser(user_uid)) filter_obj['user_uid'] = user_uid;
 
-    const duration = await exports.calculatePlaylistDuration(playlist);
-    playlist.duration = duration;
+    // Read what is stored rather than trusting what arrived. Ownership and sharing come
+    // from the stored record and are never taken from the request.
+    const stored_playlist = await db_api.getRecord('playlists', filter_obj);
+    if (!stored_playlist) {
+        logger.error(`Refusing to update playlist ${playlist.id}: it does not exist or does not belong to the caller.`);
+        return false;
+    }
 
-    return await db_api.updateRecord('playlists', filter_obj, playlist);
+    const update_obj = {};
+    for (const field of EDITABLE_PLAYLIST_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(playlist, field)) update_obj[field] = playlist[field];
+    }
+
+    if (Object.prototype.hasOwnProperty.call(update_obj, 'uids')) {
+        if (!Array.isArray(update_obj['uids'])) {
+            logger.error(`Refusing to update playlist ${playlist.id}: uids must be a list.`);
+            return false;
+        }
+
+        // Every member has to be a file the caller owns, or a shared playlist becomes a
+        // way to publish files chosen by uid alone.
+        const owned_files = await exports.getVideosByUIDs(update_obj['uids'], user_uid);
+        const owned_uids = new Set(owned_files.map(file => file['uid']));
+        const unowned_uids = update_obj['uids'].filter(uid => !owned_uids.has(uid));
+        if (unowned_uids.length) {
+            logger.error(`Refusing to update playlist ${playlist.id}: `
+                + `${unowned_uids.join(', ')} ${unowned_uids.length === 1 ? 'does' : 'do'} not belong to the caller.`);
+            return false;
+        }
+    }
+
+    update_obj['duration'] = await exports.calculatePlaylistDuration({
+        ...stored_playlist,
+        ...update_obj
+    });
+
+    return await db_api.updateRecord('playlists', filter_obj, update_obj);
 }
 
 exports.setPlaylistProperty = async (playlist_id, assignment_obj, user_uid = null) => {
@@ -1581,7 +1723,7 @@ exports.deleteFileObject = async (file_obj, blacklistMode = false) => {
         }
     }
 
-    const deleted = await deleteMediaAndSidecars(media_path_to_delete, type, sidecarPaths);
+    const deleted = await deleteMediaAndSidecars(media_path_to_delete, type, sidecarPaths, file_obj.user_uid);
     if (!deleted) return false;
 
     if (file_obj.uid) {
@@ -1682,7 +1824,8 @@ exports.deleteOrphanFiles = async (user_uid = null) => {
     for (let i = 0; i < orphan_files.length; i += PLAYLIST_FILE_DELETE_BATCH_SIZE) {
         const batch_orphan_files = orphan_files.slice(i, i + PLAYLIST_FILE_DELETE_BATCH_SIZE);
         const batch_results = await Promise.allSettled(
-            batch_orphan_files.map(orphan_file => deleteMediaAndSidecars(orphan_file.path, orphan_file.type))
+            batch_orphan_files.map(orphan_file =>
+                deleteMediaAndSidecars(orphan_file.path, orphan_file.type, [], orphan_file.user_uid))
         );
 
         for (const result of batch_results) {
@@ -1725,6 +1868,56 @@ exports.getVideo = async (file_uid, user_uid = null, sub_id = null) => {
     if (shouldRestrictToUser(user_uid)) filter_obj['user_uid'] = user_uid;
     if (sub_id) filter_obj['sub_id'] = sub_id;
     return await db_api.getRecord('files', filter_obj);
+}
+
+// Thumbnails are served straight off disk, so what may be served is fixed here rather than
+// inferred from whatever a record happens to hold.
+const ALLOWED_THUMBNAIL_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+
+/*************************************************
+ * Resolves the thumbnail a given caller is allowed
+ * to see for a given file, or null.
+ *
+ * The endpoint used to take the thumbnail's path
+ * from the URL and serve anything that landed
+ * inside a list of allowed roots -- a list that
+ * included the backend directory, the parent of
+ * every user's media on a default install. Any
+ * logged-in user could read any other user's
+ * thumbnails by naming the path.
+ *
+ * No path check can fix that on its own, because
+ * the video and audio folders are shared between
+ * users and a path does not say who owns it. The
+ * record does, so the record decides and the caller
+ * never names a path.
+ *
+ * It lives here rather than in the route handler so
+ * it can be exercised without booting the server;
+ * the last thing hidden behind that boot was a dead
+ * code path that survived a round of review.
+ ************************************************/
+exports.getThumbnailPathForUser = async (file_uid, user_uid = null) => {
+    if (typeof file_uid !== 'string' || !file_uid.trim()) return null;
+
+    const file_obj = await exports.getVideo(file_uid, user_uid);
+    if (!file_obj) return null;
+
+    const stored_thumbnail_path = file_obj['thumbnailPath']
+        || (file_obj['path'] ? utils.getDownloadedThumbnail(file_obj['path']) : null);
+    if (!stored_thumbnail_path) return null;
+
+    // Resolved against the working directory, which is what every other media path check
+    // does and what getDownloadedThumbnail assumed when it recorded a relative path.
+    const resolved_thumbnail_path = path.resolve(stored_thumbnail_path);
+    if (!ALLOWED_THUMBNAIL_EXTENSIONS.has(path.extname(resolved_thumbnail_path).toLowerCase())) return null;
+
+    // The record already settles ownership. This is the second lock: a stored thumbnailPath
+    // pointing outside the caller's media is not served whatever the record says, so a bad
+    // value written before that field was validated stays inert.
+    if (!utils.isPathInsideMediaRoots(resolved_thumbnail_path, user_uid)) return null;
+
+    return resolved_thumbnail_path;
 }
 
 exports.getVideosByUIDs = async (file_uids = [], user_uid = null) => {

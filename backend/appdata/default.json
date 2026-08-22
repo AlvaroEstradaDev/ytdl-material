@@ -43,8 +43,6 @@
       "warn_on_duplicate": false
     },
     "API": {
-      "use_API_key": false,
-      "API_key": "",
       "use_youtube_API": false,
       "youtube_API_key": "",
       "use_twitch_API": false,
@@ -68,7 +66,8 @@
       "enable_documentation_api": false,
       "use_custom_webhook_template": false,
       "custom_webhook_title_template": "{{event_name}}",
-      "custom_webhook_body_template": "{{event_body}}"
+      "custom_webhook_body_template": "{{event_body}}",
+      "telegram_webhook_secret": ""
     },
     "Themes": {
       "default_theme": "default",
@@ -88,7 +87,7 @@
         "url": "ldap://localhost:389",
         "bindDN": "cn=root",
         "bindCredentials": "secret",
-        "searchBase": "ou=passport-ldapauth",
+        "searchBase": "ou=people,dc=example,dc=com",
         "searchFilter": "(uid={{username}})"
       },
       "oidc": {
@@ -111,9 +110,9 @@
       "use_local_db": true,
       "mongodb_connection_string": "mongodb://127.0.0.1:27017/?compressors=zlib",
       "remote_db_type": "",
-      "db_migrate": "",
       "postgresdb_connection_string": "",
-      "redis_connection_string": ""
+      "redis_connection_string": "",
+      "db_migrate": ""
     },
     "Advanced": {
       "default_downloader": "youtube-dl",

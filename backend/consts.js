@@ -222,6 +222,10 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_telegram_webhook_proxy',
         'path': 'YtdlMaterial.API.telegram_webhook_proxy'
     },
+    'ytdl_telegram_webhook_secret': {
+        'key': 'ytdl_telegram_webhook_secret',
+        'path': 'YtdlMaterial.API.telegram_webhook_secret'
+    },
     'ytdl_webhook_url': {
         'key': 'ytdl_webhook_url',
         'path': 'YtdlMaterial.API.webhook_URL'
@@ -503,4 +507,4 @@ exports.SUBSCRIPTION_BACKUP_PATH = 'subscription_backup.json'
 // we're using a Set here for performance
 exports.YTDL_ARGS_WITH_VALUES = new Set(YTDL_ARGS_WITH_VALUES);
 
-exports.CURRENT_VERSION = 'v1.0.10';
+exports.CURRENT_VERSION = 'v1.1.0';

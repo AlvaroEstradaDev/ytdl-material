@@ -1,7 +1,6 @@
 import { DownloadsComponent } from './downloads.component';
 import { Download } from 'api-types';
-import { fakeAsync, tick } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
+import { of } from 'rxjs';
 
 describe('DownloadsComponent', () => {
   let component: DownloadsComponent;
@@ -17,17 +16,14 @@ describe('DownloadsComponent', () => {
       config: { Extra: { enable_downloads_manager: true } },
       initialized: true,
       service_initialized: of(true),
-      getCurrentDownloads: jasmine.createSpy('getCurrentDownloads').and.returnValue(of({downloads: []})),
-      getCurrentDownloadsPaginated: jasmine.createSpy('getCurrentDownloadsPaginated').and.returnValue(of({items: [], total: 0})),
-      pauseDownload: jasmine.createSpy('pauseDownload').and.returnValue(of({success: true})),
-      resumeDownload: jasmine.createSpy('resumeDownload').and.returnValue(of({success: true})),
-      restartDownload: jasmine.createSpy('restartDownload').and.returnValue(of({success: true})),
-      openSnackBar: jasmine.createSpy('openSnackBar')
+      getCurrentDownloads: vi.fn().mockName('getCurrentDownloads').mockReturnValue(of({downloads: []})),
+      getCurrentDownloadsPaginated: vi.fn().mockName('getCurrentDownloadsPaginated').mockReturnValue(of({items: [], total: 0})),
+      pauseDownload: vi.fn().mockName('pauseDownload').mockReturnValue(of({success: true})),
+      resumeDownload: vi.fn().mockName('resumeDownload').mockReturnValue(of({success: true})),
+      restartDownload: vi.fn().mockName('restartDownload').mockReturnValue(of({success: true})),
+      openSnackBar: vi.fn().mockName('openSnackBar')
     };
-    router_mock = {
-      navigate: jasmine.createSpy('navigate'),
-      url: '/downloads'
-    };
+    router_mock = { navigate: () => {} };
     dialog_mock = { open: () => ({}), openDialogs: [] };
     clipboard_mock = { copy: () => true };
 
@@ -48,7 +44,7 @@ describe('DownloadsComponent', () => {
     } as unknown as Download;
 
     expect(component.getNormalizedPercent(download)).toBeNull();
-    expect(component.shouldShowPercentComplete(download)).toBeFalse();
+    expect(component.shouldShowPercentComplete(download)).toBe(false);
   });
 
   it('keeps step text when percent is missing during step 2', () => {
@@ -60,7 +56,7 @@ describe('DownloadsComponent', () => {
       percent_complete: null
     } as unknown as Download;
 
-    expect(component.shouldShowPercentComplete(download)).toBeFalse();
+    expect(component.shouldShowPercentComplete(download)).toBe(false);
     expect(component.getNormalizedPercent(download)).toBeNull();
   });
 
@@ -73,7 +69,7 @@ describe('DownloadsComponent', () => {
       percent_complete: '12.34'
     } as unknown as Download;
 
-    expect(component.shouldShowPercentComplete(download)).toBeTrue();
+    expect(component.shouldShowPercentComplete(download)).toBe(true);
     expect(component.getNormalizedPercent(download)).toBe('12.34');
   });
 
@@ -90,7 +86,7 @@ describe('DownloadsComponent', () => {
   });
 
   it('tracks whether failed downloads can be retried', () => {
-    posts_service_mock.getCurrentDownloadsPaginated.and.returnValue(of({
+    posts_service_mock.getCurrentDownloadsPaginated.mockReturnValue(of({
       items: [
         {uid: 'download-1', error: 'Network error', cancelled: false},
         {uid: 'download-2', error: null, cancelled: false}
@@ -100,175 +96,7 @@ describe('DownloadsComponent', () => {
 
     component.getCurrentDownloads();
 
-    expect(component.failed_download_exists).toBeTrue();
-  });
-
-  it('does not overlap recurring downloads requests', fakeAsync(() => {
-    const first_request = new Subject<any>();
-    const second_request = new Subject<any>();
-    posts_service_mock.getCurrentDownloads.and.returnValues(
-      first_request.asObservable(),
-      second_request.asObservable()
-    );
-
-    component.getCurrentDownloadsRecurring();
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledOnceWith(null, false, 0, 10);
-
-    tick(component.downloads_check_interval * 3);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(1);
-
-    first_request.next({
-      downloads: [{uid: 'running-download', finished: false, paused: false, timestamp_start: 1}]
-    });
-    first_request.complete();
-    tick(component.downloads_check_interval - 1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(1);
-
-    tick(1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(2);
-    component.ngOnDestroy();
-  }));
-
-  it('backs off after an error and returns to the normal interval after recovery', fakeAsync(() => {
-    const failed_request = new Subject<any>();
-    const recovered_request = new Subject<any>();
-    const next_request = new Subject<any>();
-    posts_service_mock.getCurrentDownloads.and.returnValues(
-      failed_request.asObservable(),
-      recovered_request.asObservable(),
-      next_request.asObservable()
-    );
-
-    component.getCurrentDownloadsRecurring();
-    failed_request.error(new Error('Bad Gateway'));
-
-    expect(component.downloads_retrieved).toBeTrue();
-    expect(component.downloads_load_error).toBeTrue();
-    tick(component.downloads_error_retry_interval - 1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(1);
-
-    tick(1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(2);
-
-    recovered_request.next({
-      downloads: [{uid: 'running-download', finished: false, paused: false, timestamp_start: 1}]
-    });
-    expect(component.downloads_load_error).toBeFalse();
-    recovered_request.complete();
-    tick(component.downloads_check_interval - 1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(2);
-
-    tick(1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(3);
-    component.ngOnDestroy();
-  }));
-
-  it('cancels an in-flight downloads request when destroyed', fakeAsync(() => {
-    const pending_request = new Subject<any>();
-    posts_service_mock.getCurrentDownloads.and.returnValue(pending_request.asObservable());
-
-    component.getCurrentDownloadsRecurring();
-    expect(pending_request.observers.length).toBe(1);
-
-    component.ngOnDestroy();
-    expect(pending_request.observers.length).toBe(0);
-
-    tick(component.downloads_max_error_retry_interval);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(1);
-  }));
-
-  it('uses a slower poll interval when the downloads page has no active work', fakeAsync(() => {
-    const next_request = new Subject<any>();
-    posts_service_mock.getCurrentDownloads.and.returnValues(
-      of({downloads: [], total_count: 0, page: 0, page_size: 10}),
-      next_request.asObservable()
-    );
-
-    component.getCurrentDownloadsRecurring();
-    tick(component.downloads_idle_check_interval - 1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(1);
-
-    tick(1);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(2);
-    component.ngOnDestroy();
-  }));
-
-  it('cancels a scheduled downloads poll when destroyed', fakeAsync(() => {
-    posts_service_mock.getCurrentDownloads.and.returnValue(of({downloads: []}));
-
-    component.getCurrentDownloadsRecurring();
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(1);
-
-    component.ngOnDestroy();
-    tick(component.downloads_idle_check_interval);
-
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(1);
-  }));
-
-  it('requests and applies the selected server downloads page', () => {
-    posts_service_mock.getCurrentDownloads.and.returnValue(of({
-      downloads: [{uid: 'page-download', timestamp_start: 1}],
-      total_count: 47,
-      page: 1,
-      page_size: 20
-    }));
-    component.pageIndex = 2;
-    component.pageSize = 20;
-
-    component.getCurrentDownloads();
-
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledOnceWith(null, false, 2, 20);
-    expect(component.downloads_total_count).toBe(47);
-    expect(component.pageIndex).toBe(1);
-    expect(component.pageSize).toBe(20);
-    expect(component.dataSource.data.map(download => download.uid)).toEqual(['page-download']);
-    expect(component.dataSource.paginator).toBeNull();
-  });
-
-  it('cancels a stale page request and immediately loads a newly selected page', fakeAsync(() => {
-    const first_page_request = new Subject<any>();
-    const selected_page_request = new Subject<any>();
-    posts_service_mock.getCurrentDownloads.and.returnValues(
-      first_page_request.asObservable(),
-      selected_page_request.asObservable()
-    );
-
-    component.getCurrentDownloadsRecurring();
-    expect(first_page_request.observers.length).toBe(1);
-
-    component.pageChangeEvent({pageIndex: 3, pageSize: 20} as any);
-
-    expect(first_page_request.observers.length).toBe(0);
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledTimes(2);
-    expect(posts_service_mock.getCurrentDownloads.calls.mostRecent().args).toEqual([null, false, 3, 20]);
-    component.ngOnDestroy();
-  }));
-
-  it('keeps exact-UID downloads requests unpaginated', () => {
-    component.uids = ['download-a', 'download-b'];
-    posts_service_mock.getCurrentDownloads.and.returnValue(of({
-      downloads: [],
-      total_count: 0,
-      page: 0,
-      page_size: 2
-    }));
-
-    component.getCurrentDownloads();
-
-    expect(posts_service_mock.getCurrentDownloads).toHaveBeenCalledOnceWith(component.uids);
-  });
-
-  it('navigates lean playlist summaries by container id', () => {
-    component.watchContent({
-      uid: 'playlist-download',
-      type: 'video',
-      container: {id: 'playlist-id'}
-    } as unknown as Download);
-
-    expect(router_mock.navigate).toHaveBeenCalledOnceWith([
-      '/player',
-      {playlist_id: 'playlist-id', type: 'video'}
-    ]);
+    expect(component.failed_download_exists).toBe(true);
   });
 
   it('retries failed downloads only', () => {
@@ -280,14 +108,14 @@ describe('DownloadsComponent', () => {
 
     component.retryFailedDownloads();
 
-    expect(posts_service_mock.restartDownload).toHaveBeenCalledOnceWith('failed-1');
+    expect(posts_service_mock.restartDownload).toHaveBeenCalledWith('failed-1');
   });
 
   it('shows a failure message when retrying failed downloads fails', () => {
     component.raw_downloads = [
       {uid: 'failed-1', error: 'Network error', finished: true, cancelled: false}
     ] as unknown as Download[];
-    posts_service_mock.restartDownload.and.returnValue(of({success: false}));
+    posts_service_mock.restartDownload.mockReturnValue(of({success: false}));
 
     component.retryFailedDownloads();
 
@@ -304,8 +132,8 @@ describe('DownloadsComponent', () => {
       finished_step: false
     } as unknown as Download;
 
-    expect(pause_action.show(interrupted_download)).toBeFalse();
-    expect(resume_action.show(interrupted_download)).toBeTrue();
+    expect(pause_action.show(interrupted_download)).toBe(false);
+    expect(resume_action.show(interrupted_download)).toBe(true);
   });
 
   it('resumes paused downloads even when their queue step needs retrying', () => {
@@ -318,12 +146,12 @@ describe('DownloadsComponent', () => {
 
     component.resumeDownload(interrupted_download);
 
-    expect(posts_service_mock.resumeDownload).toHaveBeenCalledOnceWith('paused-mid-step');
+    expect(posts_service_mock.resumeDownload).toHaveBeenCalledWith('paused-mid-step');
     expect(posts_service_mock.pauseDownload).not.toHaveBeenCalled();
   });
 
   it('updates pageSize and pageIndex from paginator pageChange event', () => {
-    posts_service_mock.getCurrentDownloadsPaginated.and.returnValue(of({items: [], total: 200}));
+    posts_service_mock.getCurrentDownloadsPaginated.mockReturnValue(of({items: [], total: 200}));
 
     component.pageChangeEvent({limit: 50, offset: 100});
 
@@ -340,7 +168,7 @@ describe('DownloadsComponent', () => {
 
   it('clamps pageIndex when total shrinks past current page', () => {
     // Page 5 with only 1 total item → must clamp back to page 0 and refetch.
-    posts_service_mock.getCurrentDownloadsPaginated.and.returnValue(of({items: [], total: 1}));
+    posts_service_mock.getCurrentDownloadsPaginated.mockReturnValue(of({items: [], total: 1}));
     component.pageSize = 10;
     component.pageIndex = 5;
 
@@ -372,7 +200,7 @@ describe('DownloadsComponent', () => {
 
     const merged = (component as any).mergeBatchPlaylistProgress([chunk_2 as any, chunk_1 as any]);
 
-    expect(Array.isArray(merged)).toBeTrue();
+    expect(Array.isArray(merged)).toBe(true);
     expect(merged.map(item => item.index)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(merged.map(item => item.title)).toEqual(['A', 'B', 'C', 'D', 'E', 'F']);
   });

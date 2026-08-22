@@ -1,6 +1,7 @@
 const utils = require('./utils');
 const logger = require('./logger');
 const db_api = require('./db');
+const config_api = require('./config');
 const path = require('path');
 const { v4: uuid } = require('uuid');
 /*
@@ -253,7 +254,21 @@ async function createDefaultCategories() {
     return categories;
 }
 
-async function getCategoriesAsPlaylists() {
+/*************************************************
+ * The categories themselves are server-wide, which
+ * is the design -- they are rules, not content. The
+ * files they gather are not.
+ *
+ * This queried every categorized file on the server
+ * regardless of who was asking, so the playlist it
+ * built for a category described somebody else's
+ * library: their file's uid, the path and URL of
+ * their thumbnail, and a duration totalled over
+ * media the caller cannot see. A caller has to be
+ * given the uid to fetch a thumbnail, so handing
+ * out another user's was the whole of the leak.
+ ************************************************/
+async function getCategoriesAsPlaylists(user_uid = null) {
     const categories_as_playlists = [];
     const available_categories = await getCategories();
     if (!available_categories || available_categories.length === 0) return categories_as_playlists;
@@ -261,7 +276,11 @@ async function getCategoriesAsPlaylists() {
     const category_uids = available_categories.map(category => category['uid']).filter(Boolean);
     if (category_uids.length === 0) return categories_as_playlists;
 
-    const categorized_files = await db_api.getRecords('files', {'category.uid': {$in: category_uids}});
+    const scoped_filter = config_api.getConfigItem('ytdl_multi_user_mode') ? {user_uid: user_uid} : {};
+    const categorized_files = await db_api.getRecords('files', {
+        'category.uid': {$in: category_uids},
+        ...scoped_filter
+    });
     if (!categorized_files || categorized_files.length === 0) return categories_as_playlists;
 
     const files_by_category_uid = new Map();
@@ -282,6 +301,9 @@ async function getCategoriesAsPlaylists() {
         const category_playlist = {...category};
         category_playlist['thumbnailURL'] = files_that_match[0].thumbnailURL;
         category_playlist['thumbnailPath'] = files_that_match[0].thumbnailPath;
+        // A category is not a file, so it has no thumbnail of its own -- it borrows one.
+        // The thumbnail endpoint takes a file uid, so say which file it is borrowing from.
+        category_playlist['thumbnailFileUid'] = files_that_match[0].uid;
         category_playlist['duration'] = files_that_match.reduce((a, b) => a + utils.durationStringToNumber(b.duration), 0);
         category_playlist['id'] = category_playlist['uid'];
         category_playlist['auto'] = true;

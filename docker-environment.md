@@ -74,11 +74,9 @@ If `ytdl_redis_connection_string` is configured, ytdl-material will attempt to u
 
 Env-backed settings are always written into `appdata/default.json` on startup. To clear a previously written Redis connection string, set `ytdl_redis_connection_string=''` for one startup, then remove the line entirely afterward.
 
-## Public API Variables
+## API Documentation Variable
 
-* `ytdl_use_api_key`: set to `'true'` to require `apiKey` for public API endpoints
-* `ytdl_api_key`: public API key value used when `ytdl_use_api_key` is enabled
-* `ytdl_enable_documentation_api`: set to `'true'` to expose local API docs at `/docs` (requires `ytdl_use_api_key` and restart)
+* `ytdl_enable_documentation_api`: set to `'true'` to serve API documentation at `/docs` after restart
 
 ## HTTPS and Reverse Proxy Variables
 

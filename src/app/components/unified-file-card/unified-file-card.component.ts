@@ -53,7 +53,6 @@ export class UnifiedFileCardComponent implements OnInit {
   @Input() displayDateProperty = 'registered';
   @Input() baseStreamPath = null;
   @Input() jwtString = null;
-  @Input() apiKeyString = null;
   @Input() availablePlaylists = null;
   @Output() goToFile = new EventEmitter<any>();
   @Output() toggleFavorite = new EventEmitter<DatabaseFile>();
@@ -113,14 +112,13 @@ export class UnifiedFileCardComponent implements OnInit {
       this.file_length = fancyTimeFormat(this.file_obj.duration);
     }
 
-    if (this.file_obj && this.file_obj.thumbnailPath) {
-      let authQuery = '';
-      if (this.jwtString) {
-        authQuery = `jwt=${this.jwtString}`;
-      } else if (this.apiKeyString) {
-        authQuery = `apiKey=${this.apiKeyString}`;
-      }
-      this.thumbnailBlobURL = `${this.normalizedBaseStreamPath}/thumbnail/${encodeURIComponent(this.file_obj.thumbnailPath)}${authQuery ? '?' + authQuery : ''}`;
+    // The endpoint takes the uid of the file the thumbnail belongs to, never its path:
+    // a path says nothing about who owns it, and the media folders are shared.
+    // A category borrows a thumbnail from one of its files and names that file instead.
+    const thumbnailFileUid = this.file_obj?.thumbnailFileUid ?? (this.is_playlist ? null : this.file_obj?.uid);
+    if (this.file_obj && this.file_obj.thumbnailPath && thumbnailFileUid) {
+      const authQuery = this.jwtString ? `jwt=${this.jwtString}` : '';
+      this.thumbnailBlobURL = `${this.normalizedBaseStreamPath}/thumbnail/${encodeURIComponent(thumbnailFileUid)}${authQuery ? '?' + authQuery : ''}`;
     }
 
   }
@@ -184,8 +182,6 @@ export class UnifiedFileCardComponent implements OnInit {
 
     if (this.jwtString) {
       fullLocation += `&jwt=${this.jwtString}`;
-    } else if (this.apiKeyString) {
-      fullLocation += `&apiKey=${this.apiKeyString}`;
     }
 
     fullLocation += '&t=,10';

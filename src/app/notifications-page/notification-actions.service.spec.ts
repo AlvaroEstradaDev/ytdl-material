@@ -6,13 +6,13 @@ import { PostsService } from 'app/posts.services';
 import { Notification, NotificationAction } from 'api-types';
 
 class MockPostsService {
-  restartDownload = jasmine.createSpy().and.returnValue(of({}));
-  openSnackBar = jasmine.createSpy();
-  deleteNotification = jasmine.createSpy().and.returnValue(of({}));
+  restartDownload = vi.fn().mockReturnValue(of({}));
+  openSnackBar = vi.fn();
+  deleteNotification = vi.fn().mockReturnValue(of({}));
 }
 
 class MockRouter {
-  navigate = jasmine.createSpy();
+  navigate = vi.fn();
 }
 
 describe('NotificationActionsService', () => {
@@ -68,7 +68,7 @@ describe('NotificationActionsService', () => {
   });
 
   it('unknown action logs error and does nothing else', () => {
-    spyOn(console, 'error');
+    vi.spyOn(console, 'error');
     service.run({ notification: notif(), action: 'bogus' as NotificationAction });
     expect(console.error).toHaveBeenCalled();
     expect(router.navigate).not.toHaveBeenCalled();

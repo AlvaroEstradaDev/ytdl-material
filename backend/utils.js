@@ -1,8 +1,9 @@
 const fs = require('fs-extra');
 const path = require('path');
-const { Readable } = require('stream');
-const ffmpeg = require('fluent-ffmpeg');
-const archiver = require('archiver');
+const crypto = require('crypto');
+const { v4: uuid } = require('uuid');
+const { Readable, pipeline } = require('stream');
+const { ZipArchive } = require('archiver');
 const ProgressBar = require('progress');
 const winston = require('winston');
 
@@ -149,40 +150,73 @@ exports.getDownloadedFilesByType = async (basePath, type, full_metadata = false)
     return files;
 }
 
-exports.createContainerZipFile = async (file_name, container_file_objs) => {
+/*************************************************
+ * The archive's name on disk used to be the
+ * playlist or subscription name, which a user
+ * chooses. That put a caller-controlled string into
+ * a path -- so it could name another .zip, which
+ * the download handler then deletes after sending
+ * -- and made two people downloading containers of
+ * the same name collide with each other.
+ *
+ * The name the user chose is still what they see:
+ * it goes in the Content-Disposition header, which
+ * is what a filename is actually for.
+ ************************************************/
+exports.createContainerZipFile = async (file_name, container_file_objs, user_uid = null) => {
     const container_files_to_download = [];
-    for (let i = 0; i < container_file_objs.length; i++) {
-        const container_file_obj = container_file_objs[i];
+    for (const container_file_obj of container_file_objs) {
+        // Every path here came out of a database record. Records written before the path
+        // stopped being client-writable can still point anywhere.
+        if (!exports.isServableMediaFile(container_file_obj.path, container_file_obj.user_uid || user_uid)) {
+            logger.error(`Leaving ${container_file_obj.path} out of the archive: it is not a regular file `
+                + `inside its owner's media folder.`);
+            continue;
+        }
         container_files_to_download.push(container_file_obj.path);
     }
-    return await exports.createZipFile(path.join('appdata', file_name + '.zip'), container_files_to_download);
+
+    const zip_file_path = path.join('appdata', `container-${uuid()}.zip`);
+    return await exports.createZipFile(zip_file_path, container_files_to_download);
 }
 
 exports.createZipFile = async (zip_file_path, file_paths) => {
-    let output = fs.createWriteStream(zip_file_path);
+    const output = fs.createWriteStream(zip_file_path);
 
-    var archive = archiver('zip', {
-        gzip: true,
+    // archiver 8 replaced the callable factory with exported classes, so archiver('zip')
+    // has been throwing TypeError since the dependency was bumped -- which is to say
+    // container downloads have simply been failing.
+    const archive = new ZipArchive({
         zlib: { level: 9 } // Sets the compression level.
     });
 
-    archive.on('error', function(err) {
-        logger.error(err);
-        throw err;
+    // Both ends need a handler. An unhandled 'error' on either stream is an uncaught
+    // exception, which takes the process down rather than failing the one request --
+    // a missing file is enough to cause it.
+    const archive_finished = new Promise((resolve, reject) => {
+        output.on('close', resolve);
+        output.on('error', reject);
+        archive.on('error', reject);
+        archive.on('warning', (err) => logger.warn(`Archiver warning: ${err.message}`));
     });
 
     // pipe archive data to the output file
     archive.pipe(output);
 
-    for (let file_path of file_paths) {
+    for (const file_path of file_paths) {
         const file_name = path.parse(file_path).base;
         archive.file(file_path, {name: file_name})
     }
 
-    await archive.finalize();
+    try {
+        archive.finalize();
+        await archive_finished;
+    } catch (err) {
+        logger.error(`Failed to build ${zip_file_path}: ${err.message}`);
+        await fs.remove(zip_file_path).catch(() => null);
+        return null;
+    }
 
-    // wait a tiny bit for the zip to reload in fs
-    await exports.wait(100);
     return zip_file_path;
 }
 
@@ -232,7 +266,8 @@ exports.getJSON = (file_path, type) => {
         json_paths.push(file_path_no_extension + `${actual_ext}.info.json`);
     }
 
-    const json_path = json_paths.find(candidate_path => fs.existsSync(candidate_path));
+    // readFileSync follows a symlink, so the candidates are filtered before one is read.
+    const json_path = exports.keepSiblingSidecarPaths(file_path, json_paths).find(candidate_path => fs.existsSync(candidate_path));
     if (json_path) {
         obj = JSON.parse(fs.readFileSync(json_path, 'utf8'));
     } else obj = 0;
@@ -246,18 +281,15 @@ exports.getJSONByType = (type, name, customPath, openReadPerms = false) => {
 exports.getDownloadedThumbnail = (file_path) => {
     const file_path_no_extension = exports.removeFileExtension(file_path);
 
-    let jpgPath = file_path_no_extension + '.jpg';
-    let webpPath = file_path_no_extension + '.webp';
-    let pngPath = file_path_no_extension + '.png';
+    // What this returns is recorded as thumbnailPath and later served, so a sibling symlink
+    // pointing out of the media roots must not be recorded in the first place.
+    const candidate_paths = exports.keepSiblingSidecarPaths(file_path, [
+        file_path_no_extension + '.jpg',
+        file_path_no_extension + '.webp',
+        file_path_no_extension + '.png'
+    ]);
 
-    if (fs.existsSync(jpgPath))
-        return jpgPath;
-    else if (fs.existsSync(webpPath))
-        return webpPath;
-    else if (fs.existsSync(pngPath))
-        return pngPath;
-    else
-        return null;
+    return candidate_paths.find(candidate_path => fs.existsSync(candidate_path)) || null;
 }
 
 exports.getExpectedFileSize = (input_info_jsons) => {
@@ -356,6 +388,14 @@ exports.getExpectedFileSize = (input_info_jsons) => {
 exports.fixVideoMetadataPerms = (file_path, type) => {
     if (is_windows) return;
 
+    // chmod is a write. Derived sidecar paths are siblings of the media file now, so a
+    // contained media file means contained sidecars -- but the media path itself arrives
+    // from a database record here, and a record is not a guarantee.
+    if (!exports.isPathInsideMediaRoots(file_path)) {
+        logger.warn(`Refusing to change permissions on metadata outside the media roots: ${file_path}`);
+        return;
+    }
+
     const ext = type === 'audio' ? exports.getAudioExtension() : '.mp4';
 
     const file_path_no_extension = exports.removeFileExtension(file_path);
@@ -369,22 +409,33 @@ exports.fixVideoMetadataPerms = (file_path, type) => {
         file_path_no_extension + '.jpg'
     ];
 
-    for (const file of files_to_fix) {
+    // chmod follows a symlink to its target, so each derived path is checked, not just the
+    // media file they were derived from.
+    for (const file of exports.keepSiblingSidecarPaths(file_path, files_to_fix)) {
         if (!fs.existsSync(file)) continue;
         fs.chmodSync(file, 0o644);
     }
 }
 
 exports.deleteJSONFile = (file_path, type) => {
+    // Same reasoning as fixVideoMetadataPerms, and unlink is the less forgiving of the two.
+    if (!exports.isPathInsideMediaRoots(file_path)) {
+        logger.warn(`Refusing to delete metadata outside the media roots: ${file_path}`);
+        return;
+    }
+
     const ext = type === 'audio' ? exports.getAudioExtension() : '.mp4';
 
     const file_path_no_extension = exports.removeFileExtension(file_path);
 
-    let json_path = file_path_no_extension + '.info.json';
-    let alternate_json_path = file_path_no_extension + ext + '.info.json';
+    const json_paths = exports.keepSiblingSidecarPaths(file_path, [
+        file_path_no_extension + '.info.json',
+        file_path_no_extension + ext + '.info.json'
+    ]);
 
-    if (fs.existsSync(json_path)) fs.unlinkSync(json_path);
-    if (fs.existsSync(alternate_json_path)) fs.unlinkSync(alternate_json_path);
+    for (const json_path of json_paths) {
+        if (fs.existsSync(json_path)) fs.unlinkSync(json_path);
+    }
 }
 
 exports.durationStringToNumber = (dur_str) => {
@@ -450,10 +501,29 @@ exports.recFindByExt = async (base, ext, files, result, recursive = true) => {
     return matching_files;
 }
 
+/*************************************************
+ * Strips the extension and nothing else.
+ *
+ * It used to split the whole path on '.' and drop
+ * the last piece, which is only the extension when
+ * no directory above the file contains a dot. Give
+ * it '/media.v2/video/clip' -- a media root with a
+ * dot in its name and a file with no extension --
+ * and it returned '/media', so every sidecar path
+ * derived from it ('.info.json', '.jpg', the
+ * subtitle sidecars) pointed outside the media root
+ * entirely: read, chmod, unlink and ffmpeg output
+ * all followed it there.
+ *
+ * path.extname only ever looks at the basename, so
+ * the result now always stays in the file's own
+ * directory, which is what every caller assumes.
+ ************************************************/
 exports.removeFileExtension = (filename) => {
-    const filename_parts = filename.split('.');
-    filename_parts.splice(filename_parts.length - 1);
-    return filename_parts.join('.');
+    if (typeof filename !== 'string' || !filename) return filename;
+    const extension = path.extname(filename);
+    if (!extension) return filename;
+    return filename.slice(0, filename.length - extension.length);
 }
 
 exports.formatDateString = (date_string) => {
@@ -571,70 +641,66 @@ exports.snipFile = async (source_path, output_path, start, end, ext, on_progress
 }
 
 /**
- * ffmpeg reports progress as a HH:MM:SS.ss timemark. Output-side seeking restarts output
- * timestamps at zero, so this counts up from 0 to the length of the trimmed range.
+ * Assemble the ffmpeg arguments for one crop attempt.
+ *
+ * Argument order is load-bearing: input options have to precede -i to apply to the input,
+ * and -ss has to follow it so the seek is applied output-side. Output-side seeking is what
+ * restarts the output timestamps at zero, which the progress maths below depends on.
  */
-function parseTimemarkSeconds(timemark) {
-    if (typeof timemark === 'number') return Number.isFinite(timemark) ? timemark : null;
-    if (typeof timemark !== 'string' || timemark === '') return null;
-
-    const parts = timemark.split(':').map(Number);
-    if (parts.some(part => !Number.isFinite(part))) return null;
-
-    return parts.reduce((total, part) => (total * 60) + part, 0);
+function buildCropArgs(source_path, output_path, start, end, hardware_settings) {
+    const args = ['-y'];
+    if (hardware_settings && hardware_settings.input_options.length > 0) {
+        args.push(...hardware_settings.input_options);
+    }
+    args.push('-i', source_path);
+    if (start) {
+        args.push('-ss', String(start));
+    }
+    if (end) {
+        args.push('-t', String(end - start));
+    }
+    if (hardware_settings) {
+        if (hardware_settings.video_filters.length > 0) {
+            args.push('-vf', hardware_settings.video_filters.join(','));
+        }
+        args.push('-c:v', hardware_settings.video_encoder);
+    }
+    args.push(output_path);
+    return args;
 }
 
-function cropFileAttempt(source_path, output_path, start, end, hardware_settings, on_progress = null) {
-    return new Promise(resolve => {
-        let base_ffmpeg_call = ffmpeg(source_path);
-        if (start) {
-            base_ffmpeg_call = base_ffmpeg_call.seekOutput(start);
-        }
-        if (end) {
-            base_ffmpeg_call = base_ffmpeg_call.duration(end - start);
-        }
-        if (hardware_settings) {
-            if (hardware_settings.input_options.length > 0) {
-                base_ffmpeg_call = base_ffmpeg_call.inputOptions(hardware_settings.input_options);
-            }
-            if (hardware_settings.video_filters.length > 0) {
-                base_ffmpeg_call = base_ffmpeg_call.videoFilters(hardware_settings.video_filters);
-            }
-            base_ffmpeg_call = base_ffmpeg_call.videoCodec(hardware_settings.video_encoder);
-        }
-        // fluent-ffmpeg only fills in progress.percent when it has ffprobe data for the
-        // input, and even then it measures against the *input* duration, which for a short
-        // snip of a long file would never climb past a few percent. We know the length of
-        // the range we asked for, so derive the percentage from that instead.
-        const target_duration = Number(end) - Number(start);
-        if (on_progress && Number.isFinite(target_duration) && target_duration > 0) {
-            base_ffmpeg_call = base_ffmpeg_call.on('progress', (progress) => {
-                const elapsed_seconds = parseTimemarkSeconds(progress && progress.timemark);
-                if (elapsed_seconds === null) return;
-                const percent = (elapsed_seconds / target_duration) * 100;
-                on_progress(Math.min(100, Math.max(0, percent)));
-            });
-        }
-        base_ffmpeg_call
-            // the resolved command line is the only definitive record of which encoder ran
-            .on('start', (command_line) => {
-                logger.debug(`ffmpeg crop command: ${command_line}`);
-            })
-            .on('end', () => {
-                logger.verbose(`Cropping attempt for '${source_path}' finished.`);
-                resolve(true);
-            })
-            .on('error', (err) => {
-                logger.error(`Failed to crop ${source_path}.`);
-                logger.error(err);
-                try {
-                    fs.removeSync(output_path);
-                } catch (e) {
-                    // Non-fatal.
-                }
-                resolve(false);
-            }).save(output_path);
+async function cropFileAttempt(source_path, output_path, start, end, hardware_settings, on_progress = null) {
+    const args = buildCropArgs(source_path, output_path, start, end, hardware_settings);
+
+    // ffmpeg measures progress against the *input* position, which for a short snip of a
+    // long file would never climb past a few percent. We know the length of the range we
+    // asked for, so derive the percentage from that instead.
+    const target_duration = Number(end) - Number(start);
+    const report_progress = on_progress && Number.isFinite(target_duration) && target_duration > 0;
+
+    // the resolved command line is the only definitive record of which encoder ran
+    logger.debug(`ffmpeg crop command: ffmpeg ${args.join(' ')}`);
+
+    const {success, error} = await transcoding_api.runFfmpeg(args, {
+        on_progress_seconds: report_progress ? (elapsed_seconds) => {
+            const percent = (elapsed_seconds / target_duration) * 100;
+            on_progress(Math.min(100, Math.max(0, percent)));
+        } : null
     });
+
+    if (success) {
+        logger.verbose(`Cropping attempt for '${source_path}' finished.`);
+        return true;
+    }
+
+    logger.error(`Failed to crop ${source_path}.`);
+    logger.error(error);
+    try {
+        fs.removeSync(output_path);
+    } catch (e) {
+        // Non-fatal.
+    }
+    return false;
 }
 
 /**
@@ -974,3 +1040,469 @@ function File(id, title, thumbnailURL, isAudio, duration, url, uploader, size, p
     this.favorite = false;
 }   
 exports.File = File;
+
+/*************************************************
+ * Media paths live in the database, and database
+ * rows are editable through the API, so a stored
+ * path is not trustworthy on its own. Anything that
+ * turns one into a filesystem read has to confirm
+ * it still points somewhere we actually serve.
+ *
+ * Comparison is on path.resolve rather than
+ * realpath: it stops '..' traversal, which is the
+ * reachable case, without breaking the many setups
+ * where the media directories are themselves
+ * symlinks.
+ ************************************************/
+exports.getMediaRoots = () => {
+    const configured_roots = [
+        config_api.getConfigItem('ytdl_video_folder_path'),
+        config_api.getConfigItem('ytdl_audio_folder_path'),
+        config_api.getConfigItem('ytdl_users_base_path'),
+        config_api.getConfigItem('ytdl_subscriptions_base_path')
+    ];
+    return configured_roots
+        .filter(root => typeof root === 'string' && root.trim())
+        .map(root => realPathOrResolved(root));
+}
+
+exports.pathIsWithin = (candidate_path, container_path) => {
+    const relative_path = path.relative(container_path, candidate_path);
+    if (relative_path === '') return true;
+    return !relative_path.startsWith('..') && !path.isAbsolute(relative_path);
+}
+
+/*************************************************
+ * path.resolve only collapses '..' textually; it
+ * will happily hand back a path inside a media
+ * folder that is a symlink pointing anywhere at
+ * all. realpath follows the link, so the check is
+ * made against what would actually be opened.
+ *
+ * A path that does not exist cannot be followed --
+ * a download still in flight, a record whose file
+ * has already been removed -- so those fall back
+ * to the lexical answer, which still refuses '..'.
+ ************************************************/
+function realPathOrResolved(target_path) {
+    const resolved_path = path.resolve(target_path);
+    const trailing_segments = [];
+    let candidate_path = resolved_path;
+
+    // Walk up until something exists to canonicalize. Calling realpath on the whole path
+    // and giving up when it throws is not enough: an output template names a file that
+    // has not been written yet, so the call always fails and the answer falls back to the
+    // lexical one -- which walks straight through a symlinked directory on the way down.
+    for (;;) {
+        try {
+            const real_path = fs.realpathSync(candidate_path);
+            if (!trailing_segments.length) return real_path;
+            return path.join(real_path, ...trailing_segments.slice().reverse());
+        } catch {
+            const parent_path = path.dirname(candidate_path);
+            // Reached the filesystem root without finding anything that exists.
+            if (parent_path === candidate_path) return resolved_path;
+            trailing_segments.push(path.basename(candidate_path));
+            candidate_path = parent_path;
+        }
+    }
+}
+
+/*************************************************
+ * Narrows the roots to those a given owner's media
+ * may legitimately live in.
+ *
+ * Not simply users/<uid>: media does not always
+ * move when ownership does. ytdl_oidc_migrate_videos
+ * reassigns unowned records to a user and leaves
+ * the files in the shared video/ and audio/ roots,
+ * so restricting to the per-user directory makes
+ * every migrated file unstreamable, undownloadable
+ * and undeletable.
+ *
+ * What is actually being excluded is *other*
+ * users' directories, so the shared roots stay and
+ * only this user's own directory is added back out
+ * of users/.
+ ************************************************/
+exports.getMediaRootsForUser = (user_uid) => {
+    const roots = exports.getMediaRoots();
+    if (!user_uid || !config_api.getConfigItem('ytdl_multi_user_mode')) return roots;
+
+    const users_base_path = config_api.getConfigItem('ytdl_users_base_path');
+    if (!users_base_path) return roots;
+
+    const shared_users_root = realPathOrResolved(users_base_path);
+    const own_directory = realPathOrResolved(path.join(users_base_path, user_uid));
+
+    return [...roots.filter(root => root !== shared_users_root), own_directory];
+}
+
+/*************************************************
+ * Filters derived sidecar paths down to the ones
+ * that really are siblings of their media file.
+ *
+ * Deriving a sidecar by swapping the extension
+ * settles where the *name* is. It says nothing about
+ * where a symlink at that name points, and reads,
+ * chmods and ffmpeg all follow one. Canonicalizing
+ * both sides settles it.
+ *
+ * The invariant is deliberately local -- same
+ * directory as the media file -- rather than "inside
+ * the media roots". The roots are configuration, and
+ * a sidecar belongs to its file wherever that file
+ * is; whether the file itself belongs anywhere is a
+ * separate question, asked separately by the callers
+ * that serve it.
+ ************************************************/
+exports.keepSiblingSidecarPaths = (file_path, candidate_paths = []) => {
+    if (typeof file_path !== 'string' || !file_path.trim()) return [];
+    const parent_directory = realPathOrResolved(path.dirname(path.resolve(file_path)));
+    return candidate_paths.filter(candidate_path => {
+        if (typeof candidate_path !== 'string' || !candidate_path.trim()) return false;
+        return path.dirname(realPathOrResolved(candidate_path)) === parent_directory;
+    });
+}
+
+exports.isPathInsideMediaRoots = (candidate_path, user_uid = null) => {
+    if (typeof candidate_path !== 'string' || !candidate_path.trim()) return false;
+    const resolved_path = realPathOrResolved(candidate_path);
+    const roots = exports.getMediaRootsForUser(user_uid);
+    if (roots.length === 0) return false;
+    return roots.some(root => exports.pathIsWithin(resolved_path, root));
+}
+
+/*************************************************
+ * Containment on its own is not enough for anything
+ * that reads or deletes. A directory is "inside"
+ * the media roots too -- so is a media root itself
+ * -- and none of these endpoints mean a directory
+ * when they say path.
+ ************************************************/
+exports.isServableMediaFile = (candidate_path, user_uid = null) => {
+    if (!exports.isPathInsideMediaRoots(candidate_path, user_uid)) return false;
+    try {
+        return fs.statSync(realPathOrResolved(candidate_path)).isFile();
+    } catch {
+        return false;
+    }
+}
+
+/*************************************************
+ * Which yt-dlp options a caller may supply.
+ *
+ * This was a denylist of the dangerous options,
+ * which cannot work: yt-dlp's parser accepts any
+ * unambiguous abbreviation of a long option, so
+ * '--exec-before-d' reaches the same code as
+ * '--exec' while matching no denied name. It also
+ * accepts attached short values ('-o/tmp/x'),
+ * clustered short options, and user-defined
+ * aliases. A list of what to refuse can be walked
+ * around; a list of what to accept cannot.
+ *
+ * Everything here shapes a download -- what format,
+ * which subtitles, how fast, how many retries.
+ * Nothing here runs a command, names a binary,
+ * loads options from elsewhere, or chooses a path.
+ * An option that is not on this list is refused,
+ * abbreviations included, which is the point.
+ *
+ * The escape hatch for anything genuinely missing
+ * is Downloader.custom_args in the settings page,
+ * which is administrator-only and does not pass
+ * through here.
+ ************************************************/
+const ALLOWED_DOWNLOAD_ARGS = [
+    // format and quality
+    '-f', '--format', '-S', '--format-sort', '--format-sort-force', '--merge-output-format',
+    '--audio-format', '--audio-quality', '-x', '--extract-audio', '--remux-video', '--recode-video',
+    '--prefer-free-formats', '--check-formats', '--no-check-formats',
+    '--video-multistreams', '--audio-multistreams',
+    // subtitles
+    '--write-subs', '--write-auto-subs', '--no-write-subs', '--no-write-auto-subs', '--all-subs',
+    '--sub-lang', '--sub-langs', '--sub-format', '--convert-subs', '--convert-subtitles',
+    '--embed-subs', '--no-embed-subs',
+    // metadata and thumbnails
+    '--embed-metadata', '--add-metadata', '--no-embed-metadata',
+    '--embed-thumbnail', '--no-embed-thumbnail', '--write-thumbnail', '--no-write-thumbnail',
+    '--write-description', '--write-info-json', '--no-write-info-json',
+    '--embed-chapters', '--no-embed-chapters', '--parse-metadata', '--replace-in-metadata', '--xattrs',
+    // playlists
+    '-I', '--playlist-items', '--playlist-start', '--playlist-end', '--yes-playlist', '--no-playlist',
+    '--playlist-reverse', '--playlist-random', '--max-downloads',
+    // filters
+    '--match-filter', '--match-filters', '--break-match-filter', '--break-match-filters',
+    '--min-filesize', '--max-filesize', '--date', '--datebefore', '--dateafter',
+    '--min-views', '--max-views', '--match-title', '--reject-title', '--age-limit',
+    '--break-on-existing', '--no-break-on-existing',
+    // network and retries
+    '-r', '--limit-rate', '--throttled-rate', '-R', '--retries', '--file-access-retries',
+    '--fragment-retries', '--retry-sleep', '--socket-timeout', '-N', '--concurrent-fragments',
+    '--buffer-size', '--http-chunk-size', '-4', '--force-ipv4', '-6', '--force-ipv6', '--source-address',
+    // pacing
+    '--sleep-requests', '--sleep-interval', '--min-sleep-interval', '--max-sleep-interval', '--sleep-subtitles',
+    // filenames and overwrite behaviour
+    '--no-mtime', '--mtime', '--no-part', '--part', '--continue', '--no-continue',
+    '-i', '--ignore-errors', '--no-abort-on-error', '--abort-on-error', '--skip-unavailable-fragments',
+    '--no-overwrites', '-w', '--force-overwrites',
+    '--windows-filenames', '--no-windows-filenames', '--trim-filenames',
+    '--restrict-filenames', '--no-restrict-filenames',
+    // geo
+    '--geo-bypass', '--no-geo-bypass', '--geo-bypass-country', '--geo-bypass-ip-block',
+    // sponsorblock
+    '--sponsorblock-mark', '--sponsorblock-remove', '--no-sponsorblock', '--sponsorblock-chapter-title',
+    // extractor and http shaping
+    '--extractor-args', '--user-agent', '--referer', '--add-header', '--impersonate',
+    // output verbosity
+    '-v', '--verbose', '-q', '--quiet', '--no-warnings', '--newline', '--progress', '--no-progress',
+    '-s', '--simulate', '--no-simulate', '--skip-download'
+];
+
+exports.ALLOWED_DOWNLOAD_ARGS = ALLOWED_DOWNLOAD_ARGS;
+
+const ADVANCED_DOWNLOAD_FIELDS = ['customArgs', 'additionalArgs', 'customOutput'];
+
+exports.ADVANCED_DOWNLOAD_FIELDS = ADVANCED_DOWNLOAD_FIELDS;
+
+exports.hasAdvancedDownloadOptions = (options) => {
+    if (!options || typeof options !== 'object') return false;
+    return ADVANCED_DOWNLOAD_FIELDS.some(field => typeof options[field] === 'string' && options[field].trim() !== '');
+}
+
+function isAllowedDownloadArg(flag) {
+    // Long options are compared case-insensitively; short ones are not, because yt-dlp
+    // reads '-P' and '-p' as different options.
+    if (ALLOWED_DOWNLOAD_ARGS.includes(flag)) return true;
+    return flag.startsWith('--') && ALLOWED_DOWNLOAD_ARGS.includes(flag.toLowerCase());
+}
+
+exports.findDisallowedDownloadArgs = (raw_args) => {
+    if (typeof raw_args !== 'string' || !raw_args.trim()) return [];
+
+    return raw_args.split(',,')
+        // yt-dlp accepts '--format=best' and '--format best' alike, and the delimiter
+        // splits on ',,' rather than whitespace, so either form can be one token.
+        .map(arg => arg.trim().split(/[=\s]/)[0])
+        // A token that does not begin with '-' is a value belonging to the option before
+        // it, not an option of its own.
+        .filter(arg => arg.startsWith('-') && !isAllowedDownloadArg(arg));
+}
+
+/*************************************************
+ * Constant-time string comparison, for secrets
+ * that arrive on a request. A plain === leaks how
+ * much of the value was right through how long the
+ * comparison took.
+ ************************************************/
+exports.timingSafeEquals = (provided, expected) => {
+    if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+    const provided_buffer = Buffer.from(provided);
+    const expected_buffer = Buffer.from(expected);
+    if (provided_buffer.length !== expected_buffer.length) return false;
+    return crypto.timingSafeEqual(provided_buffer, expected_buffer);
+}
+
+/*************************************************
+ * Quarantine rather than repair.
+ *
+ * Arguments arrive as one string split on ',,', so
+ * a flag and its value can share a token or sit in
+ * separate ones. Removing just the offending flag
+ * would leave its value behind as a stray token,
+ * which yt-dlp reads as a URL. Discarding the whole
+ * string is unambiguous, and an argument list that
+ * contains one of these was not written by the
+ * download dialog in the first place.
+ *
+ * Used at the downloader boundary, where stored
+ * subscription arguments and resumed queue entries
+ * arrive without ever passing an HTTP handler.
+ ************************************************/
+exports.quarantineDisallowedDownloadArgs = (raw_args, context = 'download') => {
+    const disallowed_args = exports.findDisallowedDownloadArgs(raw_args);
+    if (!disallowed_args.length) return raw_args;
+
+    logger.error(`Discarding the custom arguments for this ${context}: ${disallowed_args.join(', ')} `
+        + `${disallowed_args.length === 1 ? 'is not an option' : 'are not options'} a download may set. `
+        + `The download will continue with its ordinary arguments.`);
+    return null;
+}
+
+/*************************************************
+ * customOutput is a yt-dlp output template joined
+ * onto the download folder, so '../' in it walks
+ * out of that folder exactly like any other path.
+ * The template placeholders are left alone -- what
+ * is being checked is the literal part.
+ ************************************************/
+exports.sanitizeCustomOutput = (custom_output, folder_path) => {
+    if (typeof custom_output !== 'string' || !custom_output.trim()) return null;
+    if (path.isAbsolute(custom_output)) {
+        logger.error(`Ignoring a custom output that is an absolute path: ${custom_output}`);
+        return null;
+    }
+
+    // realpath rather than resolve: a directory inside the folder can be a symlink, and
+    // a lexical check walks straight through it.
+    const joined_path = realPathOrResolved(path.join(folder_path, custom_output));
+    if (!exports.pathIsWithin(joined_path, realPathOrResolved(folder_path))) {
+        logger.error(`Ignoring a custom output that escapes its download folder: ${custom_output}`);
+        return null;
+    }
+
+    return custom_output;
+}
+
+/*************************************************
+ * yt-dlp reads anything option-shaped as an
+ * option, wherever it sits on the command line. A
+ * URL that begins with '-' is therefore not data:
+ * '--update-to=owner/repo@tag' asks it to replace
+ * its own binary from another repository.
+ *
+ * The launchers put '--' between the options and
+ * the URL, which stops the parsing. This is the
+ * second half: a URL still has to be a URL, and one
+ * of a scheme worth fetching.
+ ************************************************/
+const ALLOWED_DOWNLOAD_URL_PROTOCOLS = ['http:', 'https:'];
+
+exports.ALLOWED_DOWNLOAD_URL_PROTOCOLS = ALLOWED_DOWNLOAD_URL_PROTOCOLS;
+
+exports.isAllowedDownloadURL = (candidate_url) => {
+    if (typeof candidate_url !== 'string' || !candidate_url.trim()) return false;
+    // Rejected before parsing as well: a value starting with '-' is an option to yt-dlp
+    // whatever the URL parser makes of it.
+    if (candidate_url.trim().startsWith('-')) return false;
+
+    try {
+        return ALLOWED_DOWNLOAD_URL_PROTOCOLS.includes(new URL(candidate_url.trim()).protocol);
+    } catch {
+        return false;
+    }
+}
+
+/*************************************************
+ * Parses one HTTP byte range against a known file
+ * size, per RFC 9110 section 14.
+ *
+ * The handler this replaces got the browser case
+ * right and every other case wrong, which is why
+ * nothing noticed: a browser sends one polite
+ * 'bytes=0-' and never asks again. Anything driving
+ * a remote file with ffmpeg does not behave that
+ * way -- it reads the tail of the container to find
+ * an index, and it seeks speculatively past the end
+ * -- and both of those used to hang the connection
+ * or throw.
+ *
+ * Returns one of:
+ *   null                     no range header, or one
+ *                            to ignore and answer 200
+ *   {satisfiable: false}     answer 416
+ *   {start, end, length}     answer 206, inclusive
+ *
+ * An unparseable header is deliberately ignored
+ * rather than refused. RFC 9110 says a recipient
+ * that does not understand a Range header must
+ * treat the request as though it had none, and a
+ * player that sends something odd is better served
+ * the whole file than a 500.
+ ************************************************/
+exports.parseByteRange = (range_header, file_size) => {
+    if (typeof range_header !== 'string') return null;
+    if (!Number.isInteger(file_size) || file_size < 0) return null;
+
+    // Only 'bytes' is defined, and only a single range is answered here. A multi-range
+    // request is answered with the whole file rather than a multipart body.
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range_header.trim());
+    if (!match) return null;
+
+    const [, raw_start, raw_end] = match;
+    if (raw_start === '' && raw_end === '') return null;
+
+    // An empty file cannot satisfy any range, including the suffix form.
+    if (file_size === 0) return {satisfiable: false};
+
+    let start;
+    let end;
+    if (raw_start === '') {
+        // Suffix form: 'bytes=-500' is the last 500 bytes, not 'from 0 to 500'. Asking for
+        // more than the file holds is satisfiable and means the whole file.
+        const suffix_length = parseInt(raw_end, 10);
+        if (suffix_length === 0) return {satisfiable: false};
+        start = Math.max(0, file_size - suffix_length);
+        end = file_size - 1;
+    } else {
+        start = parseInt(raw_start, 10);
+        // Clamped, because the read stream stops at EOF whatever was asked for. Without
+        // this the Content-Length promised more bytes than could ever arrive, and the
+        // client waited for the remainder until it gave up.
+        end = raw_end === '' ? file_size - 1 : Math.min(parseInt(raw_end, 10), file_size - 1);
+    }
+
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (start >= file_size || start > end) return {satisfiable: false};
+
+    return {start: start, end: end, length: (end - start) + 1};
+}
+
+/*************************************************
+ * Sends an open read stream to an HTTP response,
+ * and takes responsibility for closing it.
+ *
+ * Two things this replaces a bare .pipe() for.
+ *
+ * A read error had no listener. fs.existsSync runs
+ * before the stream is opened, so a file deleted in
+ * between -- which this application does to its own
+ * files, during playback -- emitted 'error' on an
+ * emitter nobody was listening to. That is an
+ * uncaught exception, and it takes the server down
+ * rather than the request.
+ *
+ * .pipe() also does not destroy the source when the
+ * destination goes away, and a client that walks
+ * away mid-response is not an edge case here: it is
+ * how a player seeks. Every abandoned seek left an
+ * open descriptor and an entry in the registry
+ * below, neither of which was ever released.
+ *
+ * The registry is what lets a delete release its
+ * file locks first (see files.js), so an entry that
+ * outlives its stream is not merely garbage -- it
+ * is a lock nobody can find their way back to.
+ ************************************************/
+exports.pipeMediaFileToResponse = (file, res, uid) => {
+    if (config_api.descriptors[uid]) config_api.descriptors[uid].push(file);
+    else                             config_api.descriptors[uid] = [file];
+
+    const forgetDescriptor = () => {
+        const open_descriptors = config_api.descriptors[uid];
+        if (!open_descriptors) return;
+        const index = open_descriptors.indexOf(file);
+        // splice(-1, 1) drops the last element, so an entry already removed used to take
+        // an unrelated live stream out of the registry with it.
+        if (index !== -1) open_descriptors.splice(index, 1);
+        // Otherwise the object keeps one empty array per uid ever streamed.
+        if (!open_descriptors.length) delete config_api.descriptors[uid];
+    };
+
+    pipeline(file, res, (err) => {
+        forgetDescriptor();
+        if (!err) {
+            logger.debug('Successfully closed stream and removed file reference.');
+            return;
+        }
+        // A client hanging up is ordinary -- a player seeking abandons the response it
+        // asked for -- so it is not logged as a failure. Anything else is a real read
+        // error, and the response is already committed by the time it surfaces.
+        if (err.code === 'ERR_STREAM_PREMATURE_CLOSE' || err.code === 'ECONNRESET') {
+            logger.debug(`Client closed the connection while streaming ${uid}.`);
+            return;
+        }
+        logger.error(`Error while streaming ${uid}: ${err.message}`);
+    });
+}

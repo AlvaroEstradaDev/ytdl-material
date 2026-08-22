@@ -4,22 +4,23 @@ import { of } from 'rxjs';
 import { NotificationsComponent } from './notifications.component';
 import { PostsService } from 'app/posts.services';
 import { NotificationActionsService } from 'app/notifications-page/notification-actions.service';
+import { configureTestBed } from '../../../testing/test-bed';
 
 class MockPostsService {
   initialized = true;
   service_initialized = of(true);
-  getNotificationsPaginated = jasmine.createSpy().and.returnValue(of({ items: [], total: 0, unread_total: 0, limit: 10, offset: 0 }));
-  deleteNotification = jasmine.createSpy().and.returnValue(of({}));
-  deleteAllNotifications = jasmine.createSpy().and.returnValue(of({}));
-  setNotificationsToRead = jasmine.createSpy().and.returnValue(of({}));
+  getNotificationsPaginated = vi.fn().mockReturnValue(of({ items: [], total: 0, unread_total: 0, limit: 10, offset: 0 }));
+  deleteNotification = vi.fn().mockReturnValue(of({}));
+  deleteAllNotifications = vi.fn().mockReturnValue(of({}));
+  setNotificationsToRead = vi.fn().mockReturnValue(of({}));
 }
 
 class MockRouter {
-  navigate = jasmine.createSpy();
+  navigate = vi.fn();
 }
 
 class MockActions {
-  run = jasmine.createSpy();
+  run = vi.fn();
 }
 
 describe('NotificationsComponent', () => {
@@ -27,14 +28,15 @@ describe('NotificationsComponent', () => {
   let fixture: ComponentFixture<NotificationsComponent>;
 
   beforeEach(waitForAsync(() => {
-    TestBed.configureTestingModule({
+    configureTestBed({
       declarations: [NotificationsComponent],
       providers: [
         { provide: PostsService, useValue: new MockPostsService() },
         { provide: Router, useValue: new MockRouter() },
         { provide: NotificationActionsService, useValue: new MockActions() }
       ]
-    }).compileComponents();
+    })
+    .compileComponents();
   }));
 
   beforeEach(() => {
@@ -51,7 +53,7 @@ describe('NotificationsComponent', () => {
     // Use a non-zero mock so the assertion can distinguish real propagation
     // from a hardcoded 0 (the failure mode the original test hid).
     const posts = TestBed.inject(PostsService) as any as MockPostsService;
-    posts.getNotificationsPaginated.and.returnValue(
+    posts.getNotificationsPaginated.mockReturnValue(
       of({ items: [], total: 99, unread_total: 7, limit: 10, offset: 0 })
     );
     const emitted: number[] = [];
@@ -63,12 +65,12 @@ describe('NotificationsComponent', () => {
 
   it('sends paginated request without unread_only (bell shows last 10 regardless of read state)', () => {
     const posts = TestBed.inject(PostsService) as any as MockPostsService;
-    posts.getNotificationsPaginated.calls.reset();
+    posts.getNotificationsPaginated.mockClear();
     component.getNotifications();
     expect(posts.getNotificationsPaginated).toHaveBeenCalled();
-    const args = posts.getNotificationsPaginated.calls.mostRecent().args[0];
+    const args = posts.getNotificationsPaginated.mock.calls.at(-1)[0];
     expect(args.unread_only).toBeUndefined();
-    expect(args.unreadOnly).toBeUndefined();
+    expect(args.readOnly).toBeUndefined();
     expect(args).toEqual({ limit: 10, offset: 0, types: [] });
   });
 
@@ -80,8 +82,8 @@ describe('NotificationsComponent', () => {
 
   it('markAllRead marks all as read, resets unread_total, emits 0, refetches', () => {
     const posts = TestBed.inject(PostsService) as any as MockPostsService;
-    posts.getNotificationsPaginated.calls.reset();
-    posts.setNotificationsToRead.calls.reset();
+    posts.getNotificationsPaginated.mockClear();
+    posts.setNotificationsToRead.mockClear();
 
     // Seed a non-zero unread total so we can assert it actually drops.
     component.unread_total = 5;
@@ -99,7 +101,7 @@ describe('NotificationsComponent', () => {
   it('viewAll emits viewAllClicked before navigating', () => {
     const router = TestBed.inject(Router) as any;
     const order: string[] = [];
-    router.navigate.and.callFake(() => { order.push('navigate'); return Promise.resolve(true); });
+    router.navigate.mockImplementation(() => { order.push('navigate'); return Promise.resolve(true); });
     component.viewAllClicked.subscribe(() => order.push('emit'));
 
     component.viewAll();

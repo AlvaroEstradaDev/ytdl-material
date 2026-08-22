@@ -26,9 +26,7 @@ services:
       # Backend log level (optional): error, warn, info, verbose, debug
       # ytdl_log_level: 'info'
 
-      # Public API docs (optional, requires restart)
-      # ytdl_use_api_key: 'true'
-      # ytdl_api_key: 'replace-with-api-key'
+      # API documentation page (optional, requires restart).
       # ytdl_enable_documentation_api: 'true'
 
       # SSL/HTTPS configuration (optional)

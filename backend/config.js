@@ -69,7 +69,9 @@ const RETIRED_CONFIG_ITEMS = [
             + ' now always available from the Download button menu, so users who previously could not reach them'
             + ' will see them. Access is still controlled by the \'advanced_download\' user permission, which can'
             + ' be revoked per role under Settings if you want to keep it hidden.'
-    }
+    },
+    {path: 'YtdlMaterial.API.use_API_key'},
+    {path: 'YtdlMaterial.API.API_key'}
 ];
 
 exports.initialize = () => {
@@ -97,7 +99,10 @@ function removeRetiredConfigItems() {
         removed_any = true;
     }
 
-    if (removed_any) exports.setConfigFile(config_json);
+    // Retired paths must actually be deleted. setConfigFile deliberately carries forward
+    // absent secret fields, which is correct for a redacted client save but would restore a
+    // retired secret during this startup migration.
+    if (removed_any) fs.writeFileSync(configPath, JSON.stringify(config_json, null, 2));
 }
 
 function ensureConfigItemsExist() {
@@ -175,6 +180,7 @@ exports.setConfigFile = (config) => {
     try {
         const {normalized_config} = normalizeConfigRoot(config);
         const old_config = exports.getConfigFile();
+        preserveRedactedSecrets(normalized_config, old_config);
         fs.writeFileSync(configPath, JSON.stringify(normalized_config, null, 2));
         const changes = exports.findChangedConfigItems(old_config, normalized_config);
         if (changes.length > 0) {
@@ -326,8 +332,6 @@ const DEFAULT_CONFIG = {
         "enable_rss_feed": false,
       },
       "API": {
-        "use_API_key": false,
-        "API_key": "",
         "enable_documentation_api": false,
         "use_youtube_API": false,
         "youtube_API_key": "",
@@ -343,6 +347,7 @@ const DEFAULT_CONFIG = {
         "telegram_bot_token": "",
         "telegram_chat_id": "",
         "telegram_webhook_proxy": "",
+        "telegram_webhook_secret": "",
         "webhook_URL": "",
         "use_custom_webhook_template": false,
         "custom_webhook_title_template": "{{event_name}}",
@@ -367,7 +372,7 @@ const DEFAULT_CONFIG = {
             "url": "ldap://localhost:389",
             "bindDN": "cn=root",
             "bindCredentials": "secret",
-            "searchBase": "ou=passport-ldapauth",
+            "searchBase": "ou=people,dc=example,dc=com",
             "searchFilter": "(uid={{username}})"
         },
         "oidc": {
@@ -406,3 +411,182 @@ const DEFAULT_CONFIG = {
       }
     }
   }
+
+/*************************************************
+ * /api/config is reachable before login, because
+ * the frontend needs to know things like the auth
+ * method and whether registration is open before it
+ * can render anything. The config file also holds
+ * every integration secret the app has been given.
+ *
+ * So the file is redacted for callers who are not
+ * entitled to the whole thing. Callers who can edit
+ * settings get it intact, which is the only way the
+ * settings page can work -- and means a redacted
+ * value never round-trips back into setConfig.
+ ************************************************/
+const SENSITIVE_CONFIG_PATHS = [
+    'YtdlMaterial.API.API_key',
+    'YtdlMaterial.API.twitch_client_ID',
+    'YtdlMaterial.API.twitch_client_secret',
+    // The name this used to have. Installs that predate the client-ID/secret split still
+    // carry it, and redaction that only knows the new names walks straight past it.
+    'YtdlMaterial.API.twitch_API_key',
+    'YtdlMaterial.API.ntfy_topic_URL',
+    'YtdlMaterial.API.gotify_server_URL',
+    'YtdlMaterial.API.gotify_app_token',
+    'YtdlMaterial.API.telegram_bot_token',
+    'YtdlMaterial.API.telegram_chat_id',
+    'YtdlMaterial.API.telegram_webhook_proxy',
+    'YtdlMaterial.API.telegram_webhook_secret',
+    'YtdlMaterial.API.webhook_URL',
+    'YtdlMaterial.API.discord_webhook_URL',
+    'YtdlMaterial.API.slack_webhook_URL',
+    'YtdlMaterial.Users.ldap_config.bindDN',
+    'YtdlMaterial.Users.ldap_config.bindCredentials',
+    'YtdlMaterial.Users.ldap_config.url',
+    'YtdlMaterial.Users.ldap_config.searchBase',
+    'YtdlMaterial.Users.ldap_config.searchFilter',
+    'YtdlMaterial.Users.oidc.client_id',
+    'YtdlMaterial.Users.oidc.client_secret',
+    'YtdlMaterial.Users.oidc.issuer_url',
+    // Connection strings carry a username and password in the URL itself, so the whole
+    // value is the secret. A key-name heuristic would never have caught these.
+    'YtdlMaterial.Database.mongodb_connection_string',
+    'YtdlMaterial.Database.postgresdb_connection_string',
+    'YtdlMaterial.Database.redis_connection_string',
+    // Free-form yt-dlp arguments, which routinely hold --proxy and --username/--password.
+    'YtdlMaterial.Downloader.custom_args'
+];
+
+exports.SENSITIVE_CONFIG_PATHS = SENSITIVE_CONFIG_PATHS;
+
+/*************************************************
+ * Fields that read like credentials but are handed
+ * to every client on purpose, because something
+ * outside the settings page needs them. Listed
+ * explicitly so the redaction test can tell them
+ * apart from an oversight.
+ ************************************************/
+exports.CLIENT_VISIBLE_CONFIG_PATHS = {
+    'YtdlMaterial.API.youtube_API_key': 'the search runs in the browser, so the key has to reach it. Protecting it means moving search to the backend first.'
+};
+
+/*************************************************
+ * Fields a logged-in client is given but an
+ * anonymous one is not.
+ *
+ * youtube_API_key has to reach the browser because
+ * search runs there -- but "a logged-in user may
+ * see it" is not a reason to publish it to anybody
+ * who can reach the login page.
+ ************************************************/
+const AUTHENTICATED_ONLY_CONFIG_PATHS = [
+    'YtdlMaterial.API.youtube_API_key'
+];
+
+exports.AUTHENTICATED_ONLY_CONFIG_PATHS = AUTHENTICATED_ONLY_CONFIG_PATHS;
+
+function resolveParent(root, dotted_path) {
+    const parts = dotted_path.split('.');
+    const field = parts.pop();
+    let node = root;
+    for (const part of parts) {
+        if (!node || typeof node !== 'object') return {node: null, field: field};
+        node = node[part];
+    }
+    return {node: node && typeof node === 'object' ? node : null, field: field};
+}
+
+function deletePath(root, dotted_path) {
+    const {node, field} = resolveParent(root, dotted_path);
+    if (node && field in node) delete node[field];
+}
+
+function hasPath(root, dotted_path) {
+    const {node, field} = resolveParent(root, dotted_path);
+    return !!node && field in node;
+}
+
+function getPath(root, dotted_path) {
+    const {node, field} = resolveParent(root, dotted_path);
+    return node ? node[field] : undefined;
+}
+
+function setPath(root, dotted_path, value) {
+    const parts = dotted_path.split('.');
+    const field = parts.pop();
+    let node = root;
+    for (const part of parts) {
+        if (!node[part] || typeof node[part] !== 'object') node[part] = {};
+        node = node[part];
+    }
+    node[field] = value;
+}
+
+/*************************************************
+ * A client that was handed a redacted config must
+ * not be able to erase the secrets it could not see
+ * simply by saving the settings page back: the
+ * settings page submits the whole document, and
+ * setConfigFile replaces the whole document.
+ *
+ * Absence means "this was never shown to me", so
+ * the stored value is carried forward. Clearing a
+ * secret on purpose is done by sending an empty
+ * value, which is present and therefore honoured.
+ ************************************************/
+function preserveRedactedSecrets(new_config, old_config) {
+    if (!new_config || !old_config) return;
+    // Both lists, not just the sensitive one: a field withheld from anonymous callers is
+    // equally missing from a document one of them was handed, and would be erased the
+    // same way if it were saved back.
+    for (const sensitive_path of [...SENSITIVE_CONFIG_PATHS, ...AUTHENTICATED_ONLY_CONFIG_PATHS]) {
+        if (hasPath(new_config, sensitive_path)) continue;
+        if (!hasPath(old_config, sensitive_path)) continue;
+        setPath(new_config, sensitive_path, getPath(old_config, sensitive_path));
+    }
+}
+
+exports.preserveRedactedSecrets = preserveRedactedSecrets;
+
+exports.getRedactedConfigFile = () => {
+    const config_json = exports.getConfigFile();
+    if (!config_json) return config_json;
+
+    // Structured clone rather than a shallow copy: the paths below are nested, and the
+    // caller must not be able to reach the live object the rest of the process is using.
+    const redacted = JSON.parse(JSON.stringify(config_json));
+    for (const sensitive_path of SENSITIVE_CONFIG_PATHS) deletePath(redacted, sensitive_path);
+    return redacted;
+}
+
+/*************************************************
+ * What an anonymous caller gets in multi-user mode.
+ *
+ * An allowlist is the safer shape and it was tried
+ * first. The trouble is that the pre-login surface
+ * is not only the login page: a share link renders
+ * the player, and the application shell reads
+ * Subscriptions, Extra and Downloader without
+ * checking whether they are there -- so a
+ * projection that withholds them white-screens
+ * every anonymous visitor. Breaking every shared
+ * link is a worse outcome than the one being
+ * defended against.
+ *
+ * So this stays subtractive, and the compensating
+ * control is that SENSITIVE_CONFIG_PATHS is
+ * enumerated and tested rather than inferred. A
+ * test also fails on any field whose name reads
+ * like a credential, which is what catches a
+ * setting added later by somebody who did not think
+ * to update the list.
+ ************************************************/
+exports.getAnonymousConfigFile = () => {
+    const config_json = exports.getRedactedConfigFile();
+    if (!config_json) return config_json;
+
+    for (const authenticated_path of AUTHENTICATED_ONLY_CONFIG_PATHS) deletePath(config_json, authenticated_path);
+    return config_json;
+}

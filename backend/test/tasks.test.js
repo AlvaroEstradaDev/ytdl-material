@@ -1,5 +1,5 @@
 /* eslint-disable no-undef */
-const { assert, fs, uuid, db_api, utils, subscriptions_api, generateEmptyVideoFile } = require('./test-shared');
+const { assert, fs, os, path, uuid, db_api, utils, subscriptions_api, generateEmptyVideoFile } = require('./test-shared');
 
 describe('Tasks', function() {
     const tasks_api = require('../tasks');
@@ -225,7 +225,11 @@ describe('Tasks', function() {
     it('Import unregistered files', async function() {
         this.timeout(300000);
 
-        const success = await generateEmptyVideoFile('test/sample_mp4.mp4');
+        // Generated somewhere disposable rather than over the tracked fixture: ffmpeg's
+        // output is not byte-stable, so regenerating it in place left the repository
+        // dirty after every test run.
+        const generated_video_path = path.join(os.tmpdir(), `ytdl-sample-${uuid()}.mp4`);
+        const success = await generateEmptyVideoFile(generated_video_path);
 
         // pre-test cleanup
         await db_api.removeAllRecords('files', {path: 'test/missing_file.mp4'});
@@ -234,7 +238,7 @@ describe('Tasks', function() {
 
         // copies in files
         fs.copyFileSync('test/sample_mp4.info.json', 'video/sample_mp4.info.json');
-        fs.copyFileSync('test/sample_mp4.mp4', 'video/sample_mp4.mp4');
+        fs.copyFileSync(generated_video_path, 'video/sample_mp4.mp4');
         await tasks_api.executeTask('missing_db_records');
         const imported_file = await db_api.getRecord('files', {title: 'Sample File'});
         assert(success && !!imported_file);
@@ -242,6 +246,7 @@ describe('Tasks', function() {
         // post-test cleanup
         if (fs.existsSync('video/sample_mp4.info.json')) fs.unlinkSync('video/sample_mp4.info.json');
         if (fs.existsSync('video/sample_mp4.mp4'))       fs.unlinkSync('video/sample_mp4.mp4');
+        await fs.remove(generated_video_path);
     });
 
     it('Schedule and cancel task', async function() {
@@ -276,5 +281,79 @@ describe('Tasks', function() {
         await utils.wait(2000);
         const dummy_task_obj = await db_api.getRecord('tasks', {key: 'dummy_task'});
         assert(dummy_task_obj['data']);
+    });
+
+    it('Does not schedule a one-time task whose time has already passed', async function() {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        await tasks_api.updateTaskSchedule('dummy_task', {
+            type: 'timestamp',
+            data: { timestamp: yesterday.getTime() }
+        });
+
+        assert(!tasks_api.TASKS['dummy_task']['job'], 'a schedule in the past must not produce a job');
+
+        await tasks_api.updateTaskSchedule('dummy_task', null);
+    });
+
+    describe('Schedule conversion', function() {
+        it('maps a daily schedule onto a cron pattern', function() {
+            assert.strictEqual(tasks_api.buildCronPattern({hour: 0, minute: 0}), '0 0 0 * * *');
+            assert.strictEqual(tasks_api.buildCronPattern({hour: 3, minute: 30}), '0 30 3 * * *');
+        });
+
+        it('maps a weekly schedule onto a day-of-week list', function() {
+            assert.strictEqual(tasks_api.buildCronPattern({hour: 3, minute: 30, dayOfWeek: [1, 3, 5]}), '0 30 3 * * 1,3,5');
+            assert.strictEqual(tasks_api.buildCronPattern({hour: 3, minute: 30, dayOfWeek: 0}), '0 30 3 * * 0');
+        });
+
+        it('treats an absent field as every value, but pins seconds to zero', function() {
+            // The seconds field matters: node-schedule defaulted an unset second to 0, so
+            // an hour-only schedule fired once a minute. '*' there would fire every second.
+            assert.strictEqual(tasks_api.buildCronPattern({hour: 3}), '0 * 3 * * *');
+            assert.strictEqual(tasks_api.buildCronPattern({}), '0 * * * * *');
+            assert.strictEqual(tasks_api.buildCronPattern({hour: 3, minute: 30, dayOfWeek: []}), '0 30 3 * * *');
+        });
+    });
+
+    describe('Schedule timezones', function() {
+        const scheduleAt = async (tz) => {
+            await tasks_api.updateTaskSchedule('dummy_task', {
+                type: 'recurring',
+                data: {hour: 3, minute: 30, tz: tz}
+            });
+            const job = tasks_api.TASKS['dummy_task']['job'];
+            assert(!!job, `expected a job for timezone ${tz}`);
+            return job.nextRun();
+        };
+
+        afterEach(async function() {
+            await tasks_api.updateTaskSchedule('dummy_task', null);
+        });
+
+        it('honours the timezone stored with the schedule', async function() {
+            // The schedule dialog sends the browser's timezone with every schedule. It
+            // used to be passed to node-schedule as an eighth constructor argument that
+            // its seven-argument constructor discarded, so every task silently ran in the
+            // server's local time instead.
+            const tokyo = await scheduleAt('Asia/Tokyo');
+            const utc = await scheduleAt('Etc/UTC');
+
+            assert.notStrictEqual(tokyo.getTime(), utc.getTime(),
+                '03:30 in Tokyo and 03:30 in UTC are not the same moment');
+            assert.strictEqual(utc.getUTCHours(), 3);
+            assert.strictEqual(utc.getUTCMinutes(), 30);
+        });
+
+        it('falls back to server local time when the timezone is unusable', async function() {
+            // croner throws on a timezone it cannot resolve; one bad stored value must not
+            // take down scheduling for every other task.
+            const nonsense = await scheduleAt('Not/AZone');
+
+            assert(!!nonsense);
+            assert.strictEqual(nonsense.getHours(), 3);
+            assert.strictEqual(nonsense.getMinutes(), 30);
+        });
     });
 });

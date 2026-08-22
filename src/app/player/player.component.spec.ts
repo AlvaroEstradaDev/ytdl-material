@@ -6,6 +6,7 @@ import { VgApiService } from '@videogular/ngx-videogular/core';
 import { DatabaseFile } from '../../api-types';
 import { PostsService } from '../posts.services';
 import { IChapter, IMedia, ISubtitleTrack, PlayerComponent } from './player.component';
+import { configureTestBed } from '../../testing/test-bed';
 
 describe('PlayerComponent', () => {
   let component: PlayerComponent;
@@ -25,23 +26,23 @@ describe('PlayerComponent', () => {
           subscriptions_base_path: '/tmp/subscriptions'
         }
       },
-      setPageTitle: jasmine.createSpy('setPageTitle'),
-      openSnackBar: jasmine.createSpy('openSnackBar'),
-      getAllFiles: jasmine.createSpy('getAllFiles').and.returnValue({
-        subscribe: () => ({ unsubscribe() {} })
+      setPageTitle: vi.fn().mockName('setPageTitle'),
+      openSnackBar: vi.fn().mockName('openSnackBar'),
+      getAllFiles: vi.fn().mockName('getAllFiles').mockReturnValue({
+        subscribe: () => ({ unsubscribe() { } })
       }),
-      getFile: jasmine.createSpy('getFile').and.returnValue({
-        subscribe: () => ({ unsubscribe() {} })
+      getFile: vi.fn().mockName('getFile').mockReturnValue({
+        subscribe: () => ({ unsubscribe() { } })
       }),
       service_initialized: {
         pipe: () => ({
-          subscribe: () => ({ unsubscribe() {} })
+          subscribe: () => ({ unsubscribe() { } })
         })
       },
       sidenav: null
     };
 
-    TestBed.configureTestingModule({
+    configureTestBed({
       declarations: [PlayerComponent],
       providers: [
         { provide: PostsService, useValue: postsServiceStub },
@@ -49,8 +50,8 @@ describe('PlayerComponent', () => {
         {
           provide: Router,
           useValue: {
-            navigate: jasmine.createSpy('navigate'),
-            navigateByUrl: jasmine.createSpy('navigateByUrl'),
+            navigate: vi.fn().mockName('navigate'),
+            navigateByUrl: vi.fn().mockName('navigateByUrl'),
             url: '/'
           }
         },
@@ -66,14 +67,14 @@ describe('PlayerComponent', () => {
       ],
       schemas: [NO_ERRORS_SCHEMA]
     })
-    .compileComponents();
+      .compileComponents();
   }));
 
   beforeEach(() => {
     fixture = TestBed.createComponent(PlayerComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
-    postsServiceStub.setPageTitle.calls.reset();
+    postsServiceStub.setPageTitle.mockClear();
   });
 
   it('should create', () => {
@@ -101,7 +102,9 @@ describe('PlayerComponent', () => {
       description: 'Playlist description',
       isAudio: false,
       url: 'https://example.com/video'
-    } as DatabaseFile & { description: string };
+    } as DatabaseFile & {
+      description: string;
+    };
     const media: IMedia = {
       title: 'Playlist item',
       src: '/stream/test',
@@ -137,7 +140,7 @@ describe('PlayerComponent', () => {
 
     expect(component.currentIndex).toBe(0);
     expect(component.currentItem?.uid).toBe('uid-playlist');
-    expect(component.show_player).toBeTrue();
+    expect(component.show_player).toBe(true);
   });
 
   it('should hide the player when a playlist has no playable items', () => {
@@ -148,13 +151,12 @@ describe('PlayerComponent', () => {
     component.parseFileNames();
 
     expect(component.currentItem).toBeNull();
-    expect(component.show_player).toBeFalse();
+    expect(component.show_player).toBe(false);
     expect(postsServiceStub.openSnackBar).toHaveBeenCalled();
   });
 
   it('should build stream URLs without a trailing slash before the query string', () => {
     postsServiceStub.isLoggedIn = false;
-    postsServiceStub.auth_token = 'public-token';
     component.baseStreamPath = '/api/';
 
     const streamURL = component.createStreamURL({
@@ -162,17 +164,16 @@ describe('PlayerComponent', () => {
       isAudio: false
     } as DatabaseFile);
 
-    expect(streamURL).toBe('/api/stream?uid=uid%20with%20spaces&type=video&apiKey=public-token');
+    expect(streamURL).toBe('/api/stream?uid=uid%20with%20spaces&type=video');
   });
 
   it('should build subtitle track URLs without a trailing slash before the query string', () => {
     postsServiceStub.isLoggedIn = false;
-    postsServiceStub.auth_token = 'public-token';
     component.baseStreamPath = '/api/';
 
     const subtitleTrackURL = component.createSubtitleTrackURL('uid with spaces', 0);
 
-    expect(subtitleTrackURL).toBe('/api/streamSubtitle?uid=uid%20with%20spaces&index=0&apiKey=public-token');
+    expect(subtitleTrackURL).toBe('/api/streamSubtitle?uid=uid%20with%20spaces&index=0');
   });
 
   it('should reset page title on destroy', () => {
@@ -182,9 +183,9 @@ describe('PlayerComponent', () => {
   });
 
   it('should unload the native media element on destroy', () => {
-    const pauseSpy = jasmine.createSpy('pause');
-    const removeAttributeSpy = jasmine.createSpy('removeAttribute');
-    const loadSpy = jasmine.createSpy('load');
+    const pauseSpy = vi.fn().mockName('pause');
+    const removeAttributeSpy = vi.fn().mockName('removeAttribute');
+    const loadSpy = vi.fn().mockName('load');
     component.mediaElement = {
       nativeElement: {
         pause: pauseSpy,
@@ -217,12 +218,11 @@ describe('PlayerComponent', () => {
 
     expect(component.currentChapters.length).toBe(1);
     expect(component.currentChapters[0].title).toBe('Intro');
-    expect(component.chapterDropdownOpen).toBeFalse();
+    expect(component.chapterDropdownOpen).toBe(false);
   });
 
   it('should normalize subtitle metadata into player track URLs', () => {
     postsServiceStub.isLoggedIn = false;
-    postsServiceStub.auth_token = 'public-token';
     component.baseStreamPath = '/api/';
 
     const mediaObject = component.createMediaObject({
@@ -246,7 +246,7 @@ describe('PlayerComponent', () => {
         language: 'en',
         kind: 'subtitles',
         default: true,
-        src: '/api/streamSubtitle?uid=uid-subtitle&index=0&apiKey=public-token'
+        src: '/api/streamSubtitle?uid=uid-subtitle&index=0'
       }
     ]);
   });
@@ -298,7 +298,7 @@ describe('PlayerComponent', () => {
     component.syncCurrentSubtitles();
 
     expect(component.currentSubtitleTracks).toEqual(subtitles);
-    expect(component.subtitlesEnabled).toBeTrue();
+    expect(component.subtitlesEnabled).toBe(true);
   });
 
   it('should enable subtitles when subtitle metadata arrives for the current item later', () => {
@@ -311,13 +311,13 @@ describe('PlayerComponent', () => {
       uid: 'uid-subtitle'
     };
     component.subtitlesEnabled = false;
-    spyOn(component, 'refreshMediaSubtitleTracks');
+    vi.spyOn(component, 'refreshMediaSubtitleTracks').mockReturnValue(undefined);
 
     component.applySubtitlesToMedia('uid-subtitle', [
       { label: 'English', language: 'en', default: true, src: '/api/streamSubtitle?uid=uid-subtitle&index=0' }
     ]);
 
-    expect(component.subtitlesEnabled).toBeTrue();
+    expect(component.subtitlesEnabled).toBe(true);
     expect(component.refreshMediaSubtitleTracks).toHaveBeenCalled();
   });
 
@@ -369,20 +369,20 @@ describe('PlayerComponent', () => {
 
     component.toggleSubtitles();
 
-    expect(component.subtitlesEnabled).toBeFalse();
+    expect(component.subtitlesEnabled).toBe(false);
     expect(textTracks[0].mode).toBe('disabled');
     expect(textTracks[1].mode).toBe('disabled');
   });
 
   it('should report that subtitles can be toggled when subtitle tracks are available', () => {
     component.playlist = [{
-      title: 'Subtitle Test',
-      src: '/stream/test',
-      type: 'video/mp4',
-      label: 'Subtitle Test',
-      url: 'https://example.com/video',
-      uid: 'uid-subtitle'
-    }];
+        title: 'Subtitle Test',
+        src: '/stream/test',
+        type: 'video/mp4',
+        label: 'Subtitle Test',
+        url: 'https://example.com/video',
+        uid: 'uid-subtitle'
+      }];
     component.currentItem = component.playlist[0];
     component.currentSubtitleTracks = [
       { label: 'English', language: 'en', default: true, src: '/api/streamSubtitle?uid=uid-subtitle&index=0' }
@@ -390,18 +390,18 @@ describe('PlayerComponent', () => {
     component.subtitlesEnabled = true;
     component.show_player = true;
 
-    expect(component.canToggleSubtitles()).toBeTrue();
+    expect(component.canToggleSubtitles()).toBe(true);
   });
 
   it('should report that subtitles can be toggled when embedded text tracks are available without subtitle metadata', () => {
     component.playlist = [{
-      title: 'Embedded Subtitle Test',
-      src: '/stream/test',
-      type: 'video/mp4',
-      label: 'Embedded Subtitle Test',
-      url: 'https://example.com/video',
-      uid: 'uid-embedded-subtitle'
-    }];
+        title: 'Embedded Subtitle Test',
+        src: '/stream/test',
+        type: 'video/mp4',
+        label: 'Embedded Subtitle Test',
+        url: 'https://example.com/video',
+        uid: 'uid-embedded-subtitle'
+      }];
     component.currentItem = component.playlist[0];
     component.currentSubtitleTracks = [];
     component.mediaElement = {
@@ -412,11 +412,13 @@ describe('PlayerComponent', () => {
       }
     } as any;
 
-    expect(component.canToggleSubtitles()).toBeTrue();
+    expect(component.canToggleSubtitles()).toBe(true);
   });
 
   it('should retry subtitle activation when tracks attach after the initial render', fakeAsync(() => {
-    const textTracks: Array<{ mode: string }> = [];
+    const textTracks: Array<{
+      mode: string;
+    }> = [];
     component.subtitlesEnabled = true;
     component.currentSubtitleTracks = [
       { label: 'English', language: 'en', default: true, src: '/api/streamSubtitle?uid=uid-subtitle&index=0' }
@@ -461,7 +463,7 @@ describe('PlayerComponent', () => {
       addEventListener: (_event: string, listener: EventListener) => {
         addTrackListener = listener;
       },
-      removeEventListener: jasmine.createSpy('removeEventListener')
+      removeEventListener: vi.fn().mockName('removeEventListener')
     } as unknown as TextTrackList & EventTarget;
 
     component.subtitlesEnabled = true;
@@ -489,7 +491,7 @@ describe('PlayerComponent', () => {
       addEventListener: (_event: string, listener: EventListener) => {
         addTrackListener = listener;
       },
-      removeEventListener: jasmine.createSpy('removeEventListener')
+      removeEventListener: vi.fn().mockName('removeEventListener')
     } as unknown as TextTrackList & EventTarget;
 
     component.currentItem = {
@@ -512,14 +514,14 @@ describe('PlayerComponent', () => {
     addTrackListener(new Event('addtrack'));
     tick();
 
-    expect(component.subtitlesEnabled).toBeTrue();
+    expect(component.subtitlesEnabled).toBe(true);
     expect((textTracks[0] as any).mode).toBe('showing');
   }));
 
   it('should reload media when subtitles arrive after playback has already started', fakeAsync(() => {
     let loadedMetadataListener: EventListener = null;
-    const loadSpy = jasmine.createSpy('load');
-    const playSpy = jasmine.createSpy('play').and.returnValue(Promise.resolve());
+    const loadSpy = vi.fn().mockName('load');
+    const playSpy = vi.fn().mockName('play').mockResolvedValue(undefined);
     const textTracks = [{ mode: 'disabled' }];
     component.currentItem = {
       title: 'Subtitle reload test',
@@ -564,7 +566,7 @@ describe('PlayerComponent', () => {
   }));
 
   it('should reapply preloaded subtitles when the player becomes ready', fakeAsync(() => {
-    const loadSpy = jasmine.createSpy('load');
+    const loadSpy = vi.fn().mockName('load');
     const preloadedSubtitles: ISubtitleTrack[] = [
       { label: 'English', language: 'en', default: true, src: '/api/streamSubtitle?uid=uid-subtitle&index=0' }
     ];
@@ -572,9 +574,9 @@ describe('PlayerComponent', () => {
       volume: 1,
       getDefaultMedia: () => ({
         subscriptions: {
-          loadedMetadata: { subscribe: () => ({ unsubscribe() {} }) },
-          ended: { subscribe: () => ({ unsubscribe() {} }) },
-          timeUpdate: { subscribe: () => ({ unsubscribe() {} }) }
+          loadedMetadata: { subscribe: () => ({ unsubscribe() { } }) },
+          ended: { subscribe: () => ({ unsubscribe() { } }) },
+          timeUpdate: { subscribe: () => ({ unsubscribe() { } }) }
         }
       })
     } as unknown as VgApiService;
@@ -599,7 +601,7 @@ describe('PlayerComponent', () => {
         duration: 100,
         currentTime: 0,
         load: loadSpy,
-        addEventListener: jasmine.createSpy('addEventListener')
+        addEventListener: vi.fn().mockName('addEventListener')
       }
     } as any;
 
@@ -610,14 +612,14 @@ describe('PlayerComponent', () => {
   }));
 
   it('should toggle chapter dropdown state', () => {
-    const clickEvent = { stopPropagation: jasmine.createSpy('stopPropagation') } as unknown as MouseEvent;
+    const clickEvent = { stopPropagation: vi.fn().mockName('stopPropagation') } as unknown as MouseEvent;
 
     component.toggleChapterDropdown(clickEvent);
     expect(clickEvent.stopPropagation).toHaveBeenCalled();
-    expect(component.chapterDropdownOpen).toBeTrue();
+    expect(component.chapterDropdownOpen).toBe(true);
 
     component.toggleChapterDropdown(clickEvent);
-    expect(component.chapterDropdownOpen).toBeFalse();
+    expect(component.chapterDropdownOpen).toBe(false);
   });
 
   it('should close chapter dropdown on document click', () => {
@@ -625,21 +627,21 @@ describe('PlayerComponent', () => {
 
     component.onDocumentClick();
 
-    expect(component.chapterDropdownOpen).toBeFalse();
+    expect(component.chapterDropdownOpen).toBe(false);
   });
 
   it('should seek to floored chapter start when selecting from dropdown', () => {
-    const seekSpy = jasmine.createSpy('seekTime');
+    const seekSpy = vi.fn().mockName('seekTime');
     component.api = { seekTime: seekSpy } as unknown as VgApiService;
     component.chapterDropdownOpen = true;
     const chapter: IChapter = { title: 'Part 2', start_time: 42.9, end_time: 84.2 };
-    const clickEvent = { stopPropagation: jasmine.createSpy('stopPropagation') } as unknown as MouseEvent;
+    const clickEvent = { stopPropagation: vi.fn().mockName('stopPropagation') } as unknown as MouseEvent;
 
     component.selectChapterFromDropdown(chapter, clickEvent);
 
     expect(clickEvent.stopPropagation).toHaveBeenCalled();
     expect(seekSpy).toHaveBeenCalledWith(42);
-    expect(component.chapterDropdownOpen).toBeFalse();
+    expect(component.chapterDropdownOpen).toBe(false);
   });
 
   it('should request autoplay queue without chapter metadata in bulk mode', () => {
@@ -661,7 +663,7 @@ describe('PlayerComponent', () => {
     component.ensureAutoplayQueueReady();
 
     expect(postsServiceStub.getAllFiles).toHaveBeenCalled();
-    expect(postsServiceStub.getAllFiles.calls.mostRecent().args[6]).toBeFalse();
+    expect(vi.mocked(postsServiceStub.getAllFiles).mock.lastCall[6]).toBe(false);
   });
 
   it('should cache active chapter index and label from playback time', () => {
@@ -724,24 +726,24 @@ describe('PlayerComponent', () => {
     } as unknown as HTMLElement;
 
     component.onPlayerMouseMove({ currentTarget: playerElement, clientY: 430 } as unknown as MouseEvent);
-    expect(component.chapterTimelineVisible).toBeTrue();
+    expect(component.chapterTimelineVisible).toBe(true);
 
     component.onPlayerMouseMove({ currentTarget: playerElement, clientY: 320 } as unknown as MouseEvent);
-    expect(component.chapterTimelineVisible).toBeFalse();
+    expect(component.chapterTimelineVisible).toBe(false);
 
     component.onPlayerMouseLeave();
-    expect(component.chapterTimelineVisible).toBeFalse();
+    expect(component.chapterTimelineVisible).toBe(false);
   });
 
   describe('snip mode', () => {
     beforeEach(() => {
       component.currentFile = { uid: 'file-uid', duration: 120 } as DatabaseFile;
       component.api = {
-        seekTime: jasmine.createSpy('seekTime'),
-        play: jasmine.createSpy('play'),
-        pause: jasmine.createSpy('pause')
+        seekTime: vi.fn().mockName('seekTime'),
+        play: vi.fn().mockName('play'),
+        pause: vi.fn().mockName('pause')
       } as unknown as VgApiService;
-      postsServiceStub.hasPermission = jasmine.createSpy('hasPermission').and.returnValue(true);
+      postsServiceStub.hasPermission = vi.fn().mockName('hasPermission').mockReturnValue(true);
       component.snip_mode = true;
       component.snip_start = 10;
       component.snip_end = 40;
@@ -781,9 +783,9 @@ describe('PlayerComponent', () => {
       component.snip_start = 30;
       component.snip_end = 30;
 
-      expect(component.snipSelectionValid()).toBeFalse();
+      expect(component.snipSelectionValid()).toBe(false);
 
-      postsServiceStub.snipFile = jasmine.createSpy('snipFile');
+      postsServiceStub.snipFile = vi.fn().mockName('snipFile');
       component.confirmSnip();
       expect(postsServiceStub.snipFile).not.toHaveBeenCalled();
     });
@@ -791,17 +793,17 @@ describe('PlayerComponent', () => {
     it('submits a valid selection and reports failure without hanging', () => {
       component.snip_start = 10;
       component.snip_end = 40;
-      postsServiceStub.snipFile = jasmine.createSpy('snipFile').and.returnValue({
+      postsServiceStub.snipFile = vi.fn().mockName('snipFile').mockReturnValue({
         subscribe: (next: (res: any) => void) => {
           next({ success: false, error: 'nope' });
-          return { unsubscribe() {} };
+          return { unsubscribe() { } };
         }
       });
 
       component.confirmSnip();
 
       expect(postsServiceStub.snipFile).toHaveBeenCalledWith('file-uid', 10, 40);
-      expect(component.snip_in_progress).toBeFalse();
+      expect(component.snip_in_progress).toBe(false);
       expect(postsServiceStub.openSnackBar).toHaveBeenCalledWith('nope');
     });
 
@@ -823,7 +825,7 @@ describe('PlayerComponent', () => {
 
     it('does not offer snipping on media too short to trim', () => {
       component.currentFile = { uid: 'file-uid', duration: 0.5 } as DatabaseFile;
-      expect(component.canSnipCurrentFile()).toBeFalse();
+      expect(component.canSnipCurrentFile()).toBe(false);
     });
   });
 });

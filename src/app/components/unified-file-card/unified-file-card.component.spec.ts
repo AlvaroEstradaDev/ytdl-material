@@ -4,13 +4,14 @@ import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
 
 import { UnifiedFileCardComponent } from './unified-file-card.component';
+import { configureTestBed } from '../../../testing/test-bed';
 
 describe('UnifiedFileCardComponent', () => {
   let component: UnifiedFileCardComponent;
   let fixture: ComponentFixture<UnifiedFileCardComponent>;
 
   beforeEach(waitForAsync(() => {
-    TestBed.configureTestingModule({
+    configureTestBed({
       declarations: [ UnifiedFileCardComponent ],
       providers: [
         { provide: MatDialog, useValue: {} }
@@ -36,13 +37,12 @@ describe('UnifiedFileCardComponent', () => {
 
   it('should build preview stream URLs without a trailing slash before the query string', () => {
     component.baseStreamPath = '/api/';
-    component.apiKeyString = 'public-token';
     component.file_obj = {
       uid: 'uid with spaces',
       isAudio: false
     } as any;
 
-    expect(component.generateStreamURL()).toBe('/api/stream?uid=uid%20with%20spaces&type=video&apiKey=public-token&t=,10');
+    expect(component.generateStreamURL()).toBe('/api/stream?uid=uid%20with%20spaces&type=video&t=,10');
   });
 
   it('should use the upload date as the displayed date when requested', () => {

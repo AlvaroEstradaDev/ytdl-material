@@ -247,7 +247,10 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
         this.postsService.openSnackBar($localize`Failed to get file information from the server.`, 'Dismiss');
         return;
       }
-      this.postsService.incrementViewCount(this.db_file['uid'], null, this.uuid).subscribe(() => undefined, err => {
+      // playlist_id is sent so a file played through a shared playlist can be counted:
+      // the server accepts membership of a shared playlist as the capability, and the
+      // file itself is often not shared on its own.
+      this.postsService.incrementViewCount(this.db_file['uid'], null, this.uuid, this.playlist_id).subscribe(() => undefined, err => {
         console.error('Failed to increment view count');
         console.error(err);
       });
@@ -807,8 +810,6 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
 
     if (this.postsService.isLoggedIn) {
       fullLocation += `&jwt=${this.postsService.token}`;
-    } else if (this.postsService.auth_token) {
-      fullLocation += `&apiKey=${this.postsService.auth_token}`;
     }
 
     if (this.uuid) {
@@ -832,8 +833,6 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
 
     if (this.postsService.isLoggedIn) {
       fullLocation += `&jwt=${this.postsService.token}`;
-    } else if (this.postsService.auth_token) {
-      fullLocation += `&apiKey=${this.postsService.auth_token}`;
     }
 
     if (this.uuid) {
@@ -842,6 +841,10 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
 
     if (this.sub_id) {
       fullLocation += `&sub_id=${this.sub_id}`;
+    } else if (this.playlist_id) {
+      // Carried for the same reason the stream URL carries it: a shared playlist is what
+      // authorizes this request, and the server checks the file is one of its members.
+      fullLocation += `&playlist_id=${this.playlist_id}`;
     }
 
     return fullLocation;

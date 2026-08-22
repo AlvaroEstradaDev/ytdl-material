@@ -10,7 +10,7 @@ const fs = require('fs-extra');
 const path = require('path');
 
 var LocalStrategy = require('passport-local').Strategy;
-var LdapStrategy = require('passport-ldapauth');
+var LdapStrategy = require('./ldap');
 var JwtStrategy = require('passport-jwt').Strategy,
     ExtractJwt = require('passport-jwt').ExtractJwt;
 
@@ -21,6 +21,9 @@ let opts = null;
 let saltRounds = 10;
 
 const SAFE_UID_PATTERN = /^[A-Za-z0-9._@-]+$/;
+// Path separators and the null byte -- the characters that let a uid escape the folder
+// it is supposed to name, rather than merely look unusual.
+const PATH_UNSAFE_PATTERN = /[/\\\0]/;
 
 exports.initialize = function () {
   /*************************
@@ -110,6 +113,14 @@ exports.passport.deserializeUser(function(user, done) {
  **************************************/
 
 exports.registerUser = async (userid, username, plaintextPassword) => {
+  // Every caller funnels through here, and a uid becomes a directory name further down
+  // (the per-user media folder), so this is the place to refuse one that can traverse.
+  if (!exports.uidIsPathSafe(userid)) {
+    logger.error(`Registration failed: the uid ${JSON.stringify(userid)} is unusable. `
+      + `A uid must be a non-empty string, and cannot be '.', '..', or contain a path separator.`);
+    return null;
+  }
+
   const hash = await bcrypt.hash(plaintextPassword, saltRounds);
   const new_user = generateUserObject(userid, username, hash);
   // check if user exists
@@ -176,6 +187,24 @@ exports.sanitizeUserUID = (rawUID) => {
   return input;
 }
 
+/*************************************************
+ * The uid ends up as a path component in a dozen
+ * places (db.js, downloader.js, utils.js,
+ * twitch.js), so it must not be able to steer a
+ * path.join() out of the folder it names.
+ *
+ * Deliberately narrower than sanitizeUserUID: an
+ * LDAP directory was never held to SAFE_UID_PATTERN,
+ * and installs exist whose uids contain punctuation
+ * it refuses. Those keep working; only uids that
+ * can traverse are turned away.
+ ************************************************/
+exports.uidIsPathSafe = (rawUID) => {
+  if (typeof rawUID !== 'string' || !rawUID.trim()) return false;
+  if (rawUID === '.' || rawUID === '..') return false;
+  return !PATH_UNSAFE_PATTERN.test(rawUID);
+}
+
 function getOIDCIdentityFromClaims(claims, usernameClaim) {
   const fallbackClaims = [usernameClaim, 'preferred_username', 'username', 'email', 'sub'];
   for (const claimName of fallbackClaims) {
@@ -187,6 +216,27 @@ function getOIDCIdentityFromClaims(claims, usernameClaim) {
   return null;
 }
 
+/*************************************************
+ * Resolves the caller without rejecting them.
+ *
+ * optionalJwt answers "you may not proceed", which
+ * is wrong for the handful of routes that have to
+ * serve anonymous callers a smaller answer rather
+ * than refuse them. This answers "is anyone
+ * identifiable here" and leaves the consequences to
+ * the caller.
+ ************************************************/
+exports.getUserFromJWT = async function(token) {
+  if (!token || typeof token !== 'string' || !SERVER_SECRET) return null;
+  try {
+    const payload = jwt.verify(token, SERVER_SECRET);
+    if (!payload || !payload.user) return null;
+    return await db_api.getRecord('users', {uid: payload.user});
+  } catch {
+    return null;
+  }
+}
+
 exports.createJWTForUser = function(user_uid) {
   const payload = {
       exp: Math.floor(Date.now() / 1000) + JWT_EXPIRATION,
@@ -195,10 +245,30 @@ exports.createJWTForUser = function(user_uid) {
   return jwt.sign(payload, SERVER_SECRET);
 }
 
+/*************************************************
+ * User records carry the bcrypt hash, and they are
+ * handed out by the login response and by the user
+ * management endpoints. Nothing outside this module
+ * needs the hash, so it is stripped on the way out
+ * rather than trusted not to be looked at.
+ ************************************************/
+const SENSITIVE_USER_FIELDS = ['passhash'];
+
+exports.sanitizeUserForResponse = function(user) {
+  if (!user || typeof user !== 'object') return user;
+  const safe_user = {...user};
+  for (const field of SENSITIVE_USER_FIELDS) delete safe_user[field];
+  return safe_user;
+}
+
+exports.sanitizeUsersForResponse = function(users) {
+  return Array.isArray(users) ? users.map(exports.sanitizeUserForResponse) : users;
+}
+
 exports.getAuthResponseObject = async function(user) {
   const token = exports.createJWTForUser(user.uid);
   return {
-    user: user,
+    user: exports.sanitizeUserForResponse(user),
     token: token,
     permissions: await exports.userPermissions(user.uid),
     available_permissions: CONSTS.AVAILABLE_PERMISSIONS
@@ -343,6 +413,12 @@ exports.passport.use(new LdapStrategy(getLDAPConfiguration,
     if (!ldap_enabled) return done(null, false);
 
     const user_uid = user.uid;
+    if (!exports.uidIsPathSafe(user_uid)) {
+      logger.error(`LDAP login rejected: the directory returned an unusable uid (${JSON.stringify(user_uid)}). `
+        + `A uid must be a non-empty string, and cannot be '.', '..', or contain a path separator.`);
+      return done(null, false);
+    }
+
     let db_user = await db_api.getRecord('users', {uid: user_uid});
     if (!db_user) {
       // generate DB user
@@ -396,6 +472,20 @@ exports.ensureAuthenticatedElseError = (req, res, next) => {
   } else {
     res.status(401).send('Missing Authorization header');
   }
+}
+
+/*************************************************
+ * Confirms a password against the stored hash for
+ * one account. Used to make a password change prove
+ * the caller knows the password it is replacing --
+ * a live session is not on its own enough, since
+ * an unattended browser is one too.
+ ************************************************/
+exports.verifyUserPassword = async (user_uid, password) => {
+  if (typeof password !== 'string' || password === '') return false;
+  const user = await db_api.getRecord('users', {uid: user_uid});
+  if (!user || !user.passhash) return false;
+  return await bcrypt.compare(password, user.passhash);
 }
 
 // change password
@@ -487,91 +577,124 @@ exports.getUserPlaylist = async function(user_uid, playlistID, requireSharing = 
   return playlist;
 }
 
+/*************************************************
+ * The caller's uid was taken as an argument and
+ * then ignored: sharing was toggled by object id
+ * alone, so anybody holding the sharing permission
+ * could expose -- or hide -- another user's media
+ * as soon as they learned its uid.
+ *
+ * Ownership is checked before the write rather than
+ * folded into the update filter, because
+ * updateRecord reports success even when its filter
+ * matched nothing.
+ ************************************************/
 exports.changeSharingMode = async function(user_uid, file_uid, is_playlist, enabled) {
-  let success = false;
-  is_playlist ? await db_api.updateRecord(`playlists`, {id: file_uid}, {sharingEnabled: enabled}) : await db_api.updateRecord(`files`, {uid: file_uid}, {sharingEnabled: enabled});
-  success = true;
-  return success;
+  const table = is_playlist ? 'playlists' : 'files';
+  const filter_obj = is_playlist ? {id: file_uid} : {uid: file_uid};
+
+  if (config_api.getConfigItem('ytdl_multi_user_mode') && user_uid) {
+    const record = await db_api.getRecord(table, filter_obj);
+    if (!record || record['user_uid'] !== user_uid) {
+      logger.error(`Refusing to change sharing on ${file_uid}: it does not belong to ${user_uid}.`);
+      return false;
+    }
+  }
+
+  await db_api.updateRecord(table, filter_obj, {sharingEnabled: enabled});
+  return true;
 }
 
-exports.userHasPermission = async function(user_uid, permission) {
+/*************************************************
+ * One resolver, used by both callers below.
+ *
+ * They used to implement this separately and had
+ * already drifted: the list version fell through
+ * after a positive override and could report the
+ * same permission twice, while the single-check
+ * version returned early and did not.
+ *
+ * An override, positive or negative, is the final
+ * word; otherwise the role decides.
+ ************************************************/
+function resolvePermission(user_obj, role_permissions, permission) {
+  const explicit_permissions = Array.isArray(user_obj['permissions']) ? user_obj['permissions'] : [];
+  const overrides = Array.isArray(user_obj['permission_overrides']) ? user_obj['permission_overrides'] : [];
 
-  const user_obj = await db_api.getRecord('users', ({uid: user_uid}));
-  const role = user_obj['role'];
-  if (!role) {
-    // role doesn't exist
-    logger.error('Invalid role ' + role);
-    return false;
-  }
+  if (overrides.includes(permission)) return explicit_permissions.includes(permission);
 
-  const user_has_explicit_permission = user_obj['permissions'].includes(permission);
-  const permission_in_overrides = user_obj['permission_overrides'].includes(permission);
-
-  // check if user has a negative/positive override
-  if (user_has_explicit_permission && permission_in_overrides) {
-    // positive override
-    return true;
-  } else if (!user_has_explicit_permission && permission_in_overrides) {
-    // negative override
-    return false;
-  }
-
-  // no overrides, let's check if the role has the permission
-  const role_has_permission = await exports.roleHasPermissions(role, permission);
-  if (role_has_permission) {
-    return true;
-  } else {
-    logger.verbose(`User ${user_uid} failed to get permission ${permission}`);
-    return false;
-  }
+  return role_permissions.includes(permission);
 }
 
-exports.roleHasPermissions = async function(role, permission) {
-  const role_obj = await db_api.getRecord('roles', {key: role})
+/*************************************************
+ * Returns the role's permissions, or null when the
+ * role cannot be resolved at all.
+ *
+ * null and [] are deliberately different answers. A
+ * role that exists and grants nothing still leaves
+ * a user-level override meaningful. A role that is
+ * missing means the user's authorization state is
+ * unknown, and an override must not be allowed to
+ * stand in for it -- otherwise deleting a role
+ * leaves its members holding whatever was
+ * overridden onto them.
+ *
+ * Either way it does not throw: dereferencing the
+ * missing record used to turn a misconfigured role
+ * into a 500 on every request the user made.
+ ************************************************/
+async function getRolePermissions(role) {
   if (!role) {
-    logger.error(`Role ${role} does not exist!`);
-  }
-  const role_permissions = role_obj['permissions'];
-  if (role_permissions && role_permissions.includes(permission)) return true;
-  else return false;
-}
-
-exports.userPermissions = async function(user_uid) {
-  let user_permissions = [];
-  const user_obj = await db_api.getRecord('users', ({uid: user_uid}));
-  const role = user_obj['role'];
-  if (!role) {
-    // role doesn't exist
-    logger.error('Invalid role ' + role);
+    logger.error('Cannot resolve permissions: user has no role.');
     return null;
   }
   const role_obj = await db_api.getRecord('roles', {key: role});
-  const role_permissions = role_obj['permissions'];
+  if (!role_obj) {
+    logger.error(`Role ${role} does not exist!`);
+    return null;
+  }
+  return Array.isArray(role_obj['permissions']) ? role_obj['permissions'] : [];
+}
 
-  for (let i = 0; i < CONSTS.AVAILABLE_PERMISSIONS.length; i++) {
-    let permission = CONSTS.AVAILABLE_PERMISSIONS[i];
-
-    const user_has_explicit_permission = user_obj['permissions'].includes(permission);
-    const permission_in_overrides = user_obj['permission_overrides'].includes(permission);
-
-    // check if user has a negative/positive override
-    if (user_has_explicit_permission && permission_in_overrides) {
-      // positive override
-      user_permissions.push(permission);
-    } else if (!user_has_explicit_permission && permission_in_overrides) {
-      // negative override
-      continue;
-    }
-
-    // no overrides, let's check if the role has the permission
-    if (role_permissions.includes(permission)) {
-      user_permissions.push(permission);
-    } else {
-      continue;
-    }
+exports.userHasPermission = async function(user_uid, permission) {
+  const user_obj = await db_api.getRecord('users', {uid: user_uid});
+  if (!user_obj) {
+    logger.error(`Cannot resolve permissions: user ${user_uid} does not exist.`);
+    return false;
   }
 
-  return user_permissions;
+  const role_permissions = await getRolePermissions(user_obj['role']);
+  if (role_permissions === null) {
+    logger.error(`Refusing every permission for ${user_uid}: their role could not be resolved.`);
+    return false;
+  }
+
+  const has_permission = resolvePermission(user_obj, role_permissions, permission);
+
+  if (!has_permission) logger.verbose(`User ${user_uid} failed to get permission ${permission}`);
+  return has_permission;
+}
+
+exports.roleHasPermissions = async function(role, permission) {
+  const role_permissions = await getRolePermissions(role);
+  if (role_permissions === null) return false;
+  return role_permissions.includes(permission);
+}
+
+exports.userPermissions = async function(user_uid) {
+  const user_obj = await db_api.getRecord('users', {uid: user_uid});
+  if (!user_obj) {
+    logger.error(`Cannot resolve permissions: user ${user_uid} does not exist.`);
+    return [];
+  }
+
+  const role_permissions = await getRolePermissions(user_obj['role']);
+  if (role_permissions === null) {
+    logger.error(`Refusing every permission for ${user_uid}: their role could not be resolved.`);
+    return [];
+  }
+
+  return CONSTS.AVAILABLE_PERMISSIONS.filter(permission => resolvePermission(user_obj, role_permissions, permission));
 }
 
 function getToken(queryParams) {

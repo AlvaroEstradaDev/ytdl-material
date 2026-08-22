@@ -45,8 +45,6 @@
       "enable_rss_feed": false
     },
     "API": {
-      "use_API_key": false,
-      "API_key": "",
       "enable_documentation_api": false,
       "use_youtube_API": false,
       "youtube_API_key": "",
@@ -89,7 +87,7 @@
         "url": "ldap://localhost:389",
         "bindDN": "cn=root",
         "bindCredentials": "secret",
-        "searchBase": "ou=passport-ldapauth",
+        "searchBase": "ou=people,dc=example,dc=com",
         "searchFilter": "(uid={{username}})"
       },
       "oidc": {

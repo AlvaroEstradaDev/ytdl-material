@@ -1,4 +1,5 @@
 import { waitForAsync, ComponentFixture, TestBed } from '@angular/core/testing';
+import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { MatChipsModule } from '@angular/material/chips';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { of } from 'rxjs';
@@ -7,7 +8,7 @@ import { PostsService } from 'app/posts.services';
 import { NotificationActionsService } from './notification-actions.service';
 
 class MockPostsService {
-  getNotificationsPaginated = jasmine.createSpy().and.returnValue(of({
+  getNotificationsPaginated = vi.fn().mockReturnValue(of({
     items: [
       { uid: 'a', type: 'download_complete', text: 't', read: false, timestamp: 1, data: {}, actions: [] },
       { uid: 'b', type: 'download_error',    text: 't', read: false, timestamp: 2, data: {}, actions: [] }
@@ -17,15 +18,15 @@ class MockPostsService {
     limit: 10,
     offset: 0
   }));
-  deleteNotification = jasmine.createSpy().and.returnValue(of({}));
-  deleteAllNotifications = jasmine.createSpy().and.returnValue(of({}));
-  setNotificationsToRead = jasmine.createSpy().and.returnValue(of({}));
+  deleteNotification = vi.fn().mockReturnValue(of({}));
+  deleteAllNotifications = vi.fn().mockReturnValue(of({}));
+  setNotificationsToRead = vi.fn().mockReturnValue(of({}));
   initialized = true;
   service_initialized = of(true);
 }
 
 class MockActions {
-  run = jasmine.createSpy();
+  run = vi.fn();
 }
 
 describe('NotificationsPageComponent', () => {
@@ -38,6 +39,7 @@ describe('NotificationsPageComponent', () => {
     TestBed.configureTestingModule({
       imports: [MatChipsModule, NoopAnimationsModule],
       declarations: [NotificationsPageComponent],
+      schemas: [NO_ERRORS_SCHEMA],
       providers: [
         { provide: PostsService, useValue: posts },
         { provide: NotificationActionsService, useValue: new MockActions() }
@@ -60,7 +62,7 @@ describe('NotificationsPageComponent', () => {
   });
 
   it('filter chip change re-fetches with new types and resets offset', () => {
-    posts.getNotificationsPaginated.calls.reset();
+    posts.getNotificationsPaginated.mockClear();
     component.onFilterChange({ value: ['download_error'] } as any);
     expect(posts.getNotificationsPaginated).toHaveBeenCalledWith({
       limit: 10, offset: 0, types: ['download_error']
@@ -83,14 +85,14 @@ describe('NotificationsPageComponent', () => {
     component.offset = 10;
     component.total = 11;
     component.items = [{ uid: 'x' } as any];
-    posts.getNotificationsPaginated.calls.reset();
+    posts.getNotificationsPaginated.mockClear();
     component.deleteNotification('x');
     expect(component.offset).toBe(0);
     expect(posts.getNotificationsPaginated).toHaveBeenCalled();
   });
 
   it('onPageChange updates limit/offset and refetches', () => {
-    posts.getNotificationsPaginated.calls.reset();
+    posts.getNotificationsPaginated.mockClear();
     component.onPageChange({ limit: 25, offset: 50 });
     expect(component.limit).toBe(25);
     expect(component.offset).toBe(50);
