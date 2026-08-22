@@ -191,6 +191,28 @@ let url_domain = null;
 let updaterStatus = null;
 
 const concurrentStreams = {};
+
+// Snipping re-encodes and can run for minutes, far longer than a request should stay open,
+// so jobs are tracked here and the client polls for the result. These are deliberately
+// in-memory: a snip that was interrupted by a restart is not worth resuming.
+// A null-prototype map so a job_uid like '__proto__' cannot resolve to an inherited value.
+const snipJobs = Object.create(null);
+const SNIP_JOB_RETENTION_MS = 30 * 60 * 1000;
+// Each snip is a full re-encode, so an unbounded queue would let one client saturate the
+// server's CPU.
+const MAX_ACTIVE_SNIP_JOBS = 3;
+
+function pruneSnipJobs() {
+    const now = Date.now();
+    for (const job_uid of Object.keys(snipJobs)) {
+        const job = snipJobs[job_uid];
+        if (job['finished'] && now - job['finished'] > SNIP_JOB_RETENTION_MS) delete snipJobs[job_uid];
+    }
+}
+
+function countActiveSnipJobs() {
+    return Object.keys(snipJobs).filter(job_uid => snipJobs[job_uid]['status'] === 'snipping').length;
+}
 const OPENAPI_SPEC_PATH_CANDIDATES = [
     path.resolve(__dirname, '..', 'Public API v1.yaml'),
     path.resolve(__dirname, 'Public API v1.yaml')
@@ -1890,6 +1912,7 @@ app.post('/api/getSubscription', optionalJwt, async (req, res) => {
     }
 
     subscription = JSON.parse(JSON.stringify(subscription));
+    if (!include_videos) delete subscription['videos'];
 
     // get sub videos
     if (subscription.name) {
@@ -2137,6 +2160,89 @@ app.post('/api/deleteFile', optionalJwt, async (req, res) => {
     let wasDeleted = false;
     wasDeleted = await files_api.deleteFile(uid, blacklistMode, user_uid);
     res.send(wasDeleted);
+});
+
+// creates a new file containing only the selected range of an existing file
+app.post('/api/snipFile', optionalJwt, async (req, res) => {
+    const uid = req.body.uid;
+    const start = req.body.start;
+    const end = req.body.end;
+    const user_uid = req.isAuthenticated() ? req.user.uid : null;
+
+    if (!uid) {
+        res.send({success: false, error: 'uid is required'});
+        return;
+    }
+
+    pruneSnipJobs();
+
+    if (countActiveSnipJobs() >= MAX_ACTIVE_SNIP_JOBS) {
+        res.send({success: false, error: 'Too many snips are already running. Please wait for one to finish.'});
+        return;
+    }
+
+    const job_uid = uuid();
+    snipJobs[job_uid] = {
+        uid: job_uid,
+        file_uid: uid,
+        user_uid: user_uid,
+        status: 'snipping',
+        percent: 0,
+        started: Date.now(),
+        finished: null,
+        error: null,
+        file: null
+    };
+
+    // Kick the work off without awaiting it so the request returns immediately with a
+    // handle the client can poll.
+    files_api.snipFile(uid, start, end, user_uid, (percent) => {
+        if (snipJobs[job_uid]) snipJobs[job_uid]['percent'] = percent;
+    }).then(result => {
+        const job = snipJobs[job_uid];
+        if (!job) return;
+        job['status'] = result['success'] ? 'complete' : 'failed';
+        job['percent'] = result['success'] ? 100 : job['percent'];
+        job['error'] = result['error'] || null;
+        job['file'] = result['file'] || null;
+        job['finished'] = Date.now();
+    }).catch(err => {
+        logger.error(`Snip job ${job_uid} threw an unexpected error.`);
+        logger.error(err);
+        const job = snipJobs[job_uid];
+        if (!job) return;
+        job['status'] = 'failed';
+        job['error'] = 'Snip failed unexpectedly';
+        job['finished'] = Date.now();
+    });
+
+    res.send({success: true, job_uid: job_uid});
+});
+
+app.post('/api/getSnipStatus', optionalJwt, async (req, res) => {
+    const job_uid = req.body.job_uid;
+    const user_uid = req.isAuthenticated() ? req.user.uid : null;
+    const job = typeof job_uid === 'string' ? snipJobs[job_uid] : null;
+
+    if (!job) {
+        res.send({success: false, error: 'Snip job could not be found'});
+        return;
+    }
+
+    // Job handles are unguessable, but scoping to the requesting user keeps one user's
+    // snip from being observable by another in multi-user mode.
+    if (job['user_uid'] && job['user_uid'] !== user_uid) {
+        res.send({success: false, error: 'Snip job could not be found'});
+        return;
+    }
+
+    res.send({
+        success: true,
+        status: job['status'],
+        percent: job['percent'],
+        error: job['error'],
+        file: job['file']
+    });
 });
 
 app.post('/api/deleteAllFiles', optionalJwt, async (req, res) => {

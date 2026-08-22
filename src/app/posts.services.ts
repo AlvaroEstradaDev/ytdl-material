@@ -3,7 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { THEMES_CONFIG } from '../themes';
 import { Router, ActivatedRouteSnapshot } from '@angular/router';
 
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
 import { filter, take } from 'rxjs/operators';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import {
@@ -35,6 +35,8 @@ import {
     GetPlaylistRequest,
     GetPlaylistResponse,
     GetRolesResponse,
+    GetSnipStatusRequest,
+    GetSnipStatusResponse,
     GetSubscriptionRequest,
     GetSubscriptionResponse,
     GetUsersResponse,
@@ -47,6 +49,8 @@ import {
     RegisterResponse,
     SetConfigRequest,
     SharingToggle,
+    SnipFileRequest,
+    SnipFileResponse,
     SubscribeRequest,
     SubscribeResponse,
     SubscriptionRequestData,
@@ -201,9 +205,9 @@ export class PostsService {
     settings_changed = new BehaviorSubject<boolean>(false);
     open_create_default_admin_dialog = new BehaviorSubject<boolean>(false);
 
-    files_changed = new BehaviorSubject<boolean>(false);
-    playlists_changed = new BehaviorSubject<boolean>(false);
-    categories_changed = new BehaviorSubject<boolean>(false);
+    files_changed = new Subject<boolean>();
+    playlists_changed = new Subject<boolean>();
+    categories_changed = new Subject<boolean>();
 
     // app status
     initialized = false;
@@ -509,6 +513,16 @@ export class PostsService {
     updateFile(uid: string, change_obj: object) {
         const body: UpdateFileRequest = {uid: uid, change_obj: change_obj};
         return this.http.post<SuccessObject>(this.path + 'updateFile', body, this.httpOptions);
+    }
+
+    snipFile(uid: string, start: number, end: number) {
+        const body: SnipFileRequest = {uid: uid, start: start, end: end};
+        return this.http.post<SnipFileResponse>(this.path + 'snipFile', body, this.httpOptions);
+    }
+
+    getSnipStatus(job_uid: string) {
+        const body: GetSnipStatusRequest = {job_uid: job_uid};
+        return this.http.post<GetSnipStatusResponse>(this.path + 'getSnipStatus', body, this.httpOptions);
     }
 
     downloadFileFromServer(uid: string, uuid: string = null) {

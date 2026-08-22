@@ -55,15 +55,3 @@ Review [CONTRIBUTING.md](./CONTRIBUTING.md) for contributor guidelines; pull req
 ## Legal Disclaimer
 
 This project is in no way affiliated with Google LLC, Alphabet Inc. or YouTube (or their subsidiaries) nor endorsed by them.
-
-## Star History
-
-<p align="center">
-  <a href="https://star-history.com/#voc0der/ytdl-material&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=voc0der/ytdl-material&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=voc0der/ytdl-material&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=voc0der/ytdl-material&type=Date" />
-    </picture>
-  </a>
-</p>
