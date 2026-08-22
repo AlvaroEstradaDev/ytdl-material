@@ -13,6 +13,10 @@ import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { MatAutocompleteModule } from '@angular/material/autocomplete';
 import { MatMenuModule } from '@angular/material/menu';
+// The player template resolves #group="matButtonToggleGroup", and an exportAs reference
+// needs the real directive -- NO_ERRORS_SCHEMA does not cover it, so without this the whole
+// template fails to render with NG0301.
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 
@@ -218,6 +222,7 @@ export function configureTestBed(moduleDef: any = {}) {
       NoopAnimationsModule,
       MatAutocompleteModule,
       MatMenuModule,
+      MatButtonToggleModule,
       ...(moduleDef.imports || [])
     ],
     providers: [

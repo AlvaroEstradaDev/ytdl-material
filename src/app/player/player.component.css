@@ -411,10 +411,12 @@
     margin-bottom: 15px;
 }
 
-.playback-mode-button {
-    opacity: 0.6;
-}
-
+/* A playback toggle is not dimmed when idle -- it sits at the same colour as the actions
+   beside it, and shows that it is engaged with a chip behind the icon instead.
+   The chip is a neutral scrim rather than a theme colour on purpose: the light theme's
+   accent is brown 200, which on its own near-white background leaves an engaged toggle
+   fainter than the idle ones. Grey at this alpha darkens a light surface and lightens a
+   dark one, so it reads in all three themes. */
 .playback-mode-button.active {
-    opacity: 1;
+    background-color: rgba(128, 128, 128, 0.28);
 }
