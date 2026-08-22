@@ -2,6 +2,8 @@ import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { ComponentFixture, TestBed, waitForAsync } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
+import { MatMenuTrigger } from '@angular/material/menu';
+import { OverlayContainer } from '@angular/cdk/overlay';
 
 import { UnifiedFileCardComponent } from './unified-file-card.component';
 import { configureTestBed } from '../../../testing/test-bed';
@@ -28,6 +30,78 @@ describe('UnifiedFileCardComponent', () => {
       ghost_primary: '#000000',
       ghost_secondary: '#111111'
     } as any;
+  });
+
+
+  // "Add to playlist" is a nested lazy menu inside the card's own lazy action menu, so both
+  // have to be opened before the playlist buttons exist anywhere to assert on.
+  function openAddToPlaylistMenu(): HTMLButtonElement[] {
+    const outer = fixture.debugElement.query(By.css('button.menuButton'));
+    outer.injector.get(MatMenuTrigger).openMenu();
+    fixture.detectChanges();
+
+    const nested = fixture.debugElement.queryAll(By.directive(MatMenuTrigger))
+      .find(candidate => candidate.nativeElement.textContent.includes('Add to playlist'));
+    expect(nested).toBeDefined();
+    nested.injector.get(MatMenuTrigger).openMenu();
+    fixture.detectChanges();
+
+    const panels = TestBed.inject(OverlayContainer).getContainerElement()
+      .querySelectorAll('.mat-mdc-menu-panel');
+    const playlist_panel = panels[panels.length - 1];
+    return Array.from(playlist_panel.querySelectorAll('button.mat-mdc-menu-item'));
+  }
+
+  function setUpFileCard(file_obj: any, playlists: any[] = [{id: 'p1', name: 'Alpha', uids: []}, {id: 'p2', name: 'Beta', uids: []}]): void {
+    component.loading = false;
+    component.is_playlist = false;
+    component.availablePlaylists = playlists as any;
+    component.file_obj = file_obj;
+    fixture.detectChanges();
+  }
+
+  it('should offer every playlist for a video file', () => {
+    setUpFileCard({uid: 'f1', title: 'A video', isAudio: false, registered: Date.now(), duration: 5});
+
+    expect(openAddToPlaylistMenu().map(button => button.textContent.trim())).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('should offer every playlist for an audio file', () => {
+    // A playlist's type is never written, so matching the file's type against it left this
+    // menu empty for everything that was not strictly video.
+    setUpFileCard({uid: 'f1', title: 'A song', isAudio: true, registered: Date.now(), duration: 5});
+
+    expect(openAddToPlaylistMenu().map(button => button.textContent.trim())).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('should offer every playlist for a record that has no isAudio at all', () => {
+    setUpFileCard({uid: 'f1', title: 'An older record', registered: Date.now(), duration: 5});
+
+    expect(openAddToPlaylistMenu().map(button => button.textContent.trim())).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('should disable a playlist that already holds the file', () => {
+    setUpFileCard(
+      {uid: 'f1', title: 'A video', isAudio: false, registered: Date.now(), duration: 5},
+      [{id: 'p1', name: 'Holds it', uids: ['f1']}, {id: 'p2', name: 'Does not', uids: ['other']}]
+    );
+
+    const buttons = openAddToPlaylistMenu();
+    expect(buttons.map(button => button.textContent.trim())).toEqual(['Holds it', 'Does not']);
+    expect(buttons[0].disabled).toBe(true);
+    expect(buttons[1].disabled).toBe(false);
+  });
+
+  it('should leave a playlist enabled when it carries no uids array', () => {
+    component.file_obj = {uid: 'f1'} as any;
+
+    expect(component.playlistContainsFile({name: 'No uids'} as any)).toBe(false);
+  });
+
+  it('should treat a missing playlist list as nothing to add to', () => {
+    component.availablePlaylists = null;
+
+    expect(component.playlistsToAddTo).toEqual([]);
   });
 
   it('should create', () => {
@@ -67,6 +141,119 @@ describe('UnifiedFileCardComponent', () => {
 
     expect(component.displayedDateValue).toBe(1713715200000);
     expect(component.displayedDateTimezone).toBeUndefined();
+  });
+
+  it('should count a playlist by the uids it holds', () => {
+    component.is_playlist = true;
+    component.file_obj = {
+      name: 'Example playlist',
+      uids: ['one', 'two', 'three']
+    } as any;
+
+    expect(component.playlistItemCount).toBe(3);
+    expect(component.playlistItemCountLabel).toBe('3 items');
+  });
+
+  it('should count an automatic playlist by the file count the server sent', () => {
+    component.is_playlist = true;
+    component.file_obj = {
+      name: 'Music',
+      auto: true,
+      file_count: 157
+    } as any;
+
+    expect(component.playlistItemCount).toBe(157);
+    expect(component.playlistItemCountLabel).toBe('157 items');
+  });
+
+  it('should count an empty playlist rather than treating it as unknown', () => {
+    component.is_playlist = true;
+    component.file_obj = {
+      name: 'Empty playlist',
+      uids: []
+    } as any;
+
+    expect(component.playlistItemCount).toBe(0);
+    expect(component.playlistItemCountLabel).toBe('0 items');
+  });
+
+  it('should say item rather than items for a playlist holding one file', () => {
+    component.is_playlist = true;
+    component.file_obj = {
+      name: 'Single',
+      uids: ['only']
+    } as any;
+
+    expect(component.playlistItemCountLabel).toBe('1 item');
+  });
+
+  it('should not count a playlist whose size is unknown', () => {
+    component.is_playlist = true;
+    component.file_obj = {
+      name: 'Unknown size'
+    } as any;
+
+    expect(component.playlistItemCount).toBeNull();
+    expect(component.playlistItemCountLabel).toBeNull();
+    expect(component.showPlaylistItemCount).toBe(false);
+  });
+
+  it('should not count a card that is not a playlist', () => {
+    component.is_playlist = false;
+    component.file_obj = {
+      title: 'Example video',
+      uids: ['one', 'two']
+    } as any;
+
+    expect(component.playlistItemCount).toBeNull();
+    expect(component.showPlaylistItemCount).toBe(false);
+  });
+
+  it('should leave the count off a small card, which has no room for it', () => {
+    component.is_playlist = true;
+    component.card_size = 'small';
+    component.file_obj = {
+      name: 'Example playlist',
+      uids: ['one', 'two']
+    } as any;
+
+    expect(component.playlistItemCountLabel).toBe('2 items');
+    expect(component.showPlaylistItemCount).toBe(false);
+  });
+
+  it('should render the count under the playlist title', () => {
+    component.loading = false;
+    component.is_playlist = true;
+    component.file_obj = {
+      name: 'Example playlist',
+      duration: 0,
+      registered: Date.now(),
+      uids: ['one', 'two', 'three']
+    } as any;
+    fixture.detectChanges();
+
+    const count_element = fixture.debugElement.query(By.css('.playlist-item-count'));
+    expect(count_element).not.toBeNull();
+    expect(count_element.nativeElement.textContent.trim()).toBe('3 items');
+
+    // The title gives up its second line to the count, so the block stays the same height.
+    expect(fixture.debugElement.query(By.css('.playlist-text .max-one-line'))).not.toBeNull();
+    expect(fixture.debugElement.query(By.css('.playlist-text .max-two-lines'))).toBeNull();
+  });
+
+  it('should render a file card title without a count', () => {
+    component.loading = false;
+    component.is_playlist = false;
+    component.file_obj = {
+      uid: 'example-uid',
+      title: 'Example title',
+      duration: 90,
+      registered: Date.now()
+    } as any;
+    fixture.detectChanges();
+
+    expect(fixture.debugElement.query(By.css('.playlist-item-count'))).toBeNull();
+    expect(fixture.debugElement.query(By.css('.max-two-lines'))).not.toBeNull();
   });
 
   it('should keep the thumbnail rendered while the hover preview is active', () => {

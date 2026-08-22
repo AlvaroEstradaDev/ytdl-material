@@ -9,7 +9,7 @@ import localeES from '@angular/common/locales/es';
 import localeDE from '@angular/common/locales/de';
 import localeZH from '@angular/common/locales/zh';
 import localeNB from '@angular/common/locales/nb';
-import { DatabaseFile } from 'api-types';
+import { DatabaseFile, Playlist } from 'api-types';
 
 registerLocaleData(localeGB);
 registerLocaleData(localeFR);
@@ -100,6 +100,60 @@ export class UnifiedFileCardComponent implements OnInit {
 
   get displayedDateLocale(): string | undefined {
     return this.locale?.ngID;
+  }
+
+  /**
+   * A normal playlist carries the uids it holds, so it is counted here. An automatic one
+   * has no uids array -- the server counts it and sends the total as file_count.
+   */
+  get playlistItemCount(): number | null {
+    if (!this.is_playlist || !this.file_obj) {
+      return null;
+    }
+
+    if (Array.isArray(this.file_obj.uids)) {
+      return this.file_obj.uids.length;
+    }
+
+    return Number.isFinite(this.file_obj.file_count) ? this.file_obj.file_count : null;
+  }
+
+  get playlistItemCountLabel(): string | null {
+    const item_count = this.playlistItemCount;
+    if (item_count === null) {
+      return null;
+    }
+
+    // A playlist holds audio as readily as video, and carries nothing that says which,
+    // so the count stays neutral about what it is counting.
+    return item_count === 1
+      ? $localize`:Playlist card single item count:1 item`
+      : $localize`:Playlist card item count:${item_count}:count: items`;
+  }
+
+  /**
+   * The count needs a line of its own beneath the title, and a small card has no room for
+   * one -- its text block would run up into the thumbnail above it. Where the count does
+   * show, the title gives up its second line to it, so the block stays as tall as before.
+   */
+  get showPlaylistItemCount(): boolean {
+    return this.card_size !== 'small' && this.playlistItemCountLabel !== null;
+  }
+
+  /**
+   * Every playlist can hold every file. The menu used to offer only playlists whose type
+   * matched the file's, but a playlist's type is never written -- so the comparison came
+   * down to "the file is strictly video", and the menu opened empty for audio and for any
+   * older record with no isAudio at all. Nothing else in the app draws that distinction:
+   * the create and edit dialog picks from every file regardless of type, and the player
+   * types each item as it plays it.
+   */
+  get playlistsToAddTo(): Playlist[] {
+    return Array.isArray(this.availablePlaylists) ? this.availablePlaylists : [];
+  }
+
+  playlistContainsFile(playlist: Playlist): boolean {
+    return Array.isArray(playlist?.uids) && playlist.uids.includes(this.file_obj?.uid);
   }
 
   private hasDisplayableUploadDate(): boolean {

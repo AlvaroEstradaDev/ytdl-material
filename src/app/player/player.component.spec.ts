@@ -1,6 +1,7 @@
 import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { ComponentFixture, TestBed, fakeAsync, tick, waitForAsync } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
+import { By } from '@angular/platform-browser';
 import { ActivatedRoute, Router, convertToParamMap } from '@angular/router';
 import { VgApiService } from '@videogular/ngx-videogular/core';
 import { DatabaseFile } from '../../api-types';
@@ -75,6 +76,85 @@ describe('PlayerComponent', () => {
     component = fixture.componentInstance;
     fixture.detectChanges();
     postsServiceStub.setPageTitle.mockClear();
+  });
+
+
+  function actionBarButtons(): HTMLButtonElement[] {
+    const row = fixture.debugElement.query(By.css('.action-buttons-row'));
+    return row ? Array.from(row.nativeElement.querySelectorAll('button')) : [];
+  }
+
+  // The whole toolbar sits behind the player's own guard, so a spec has to get far enough
+  // for the player to be showing before any action button exists. ngOnInit runs on the
+  // first detectChanges and rebuilds this state, so it has to settle first.
+  function showPlayer(): void {
+    fixture.detectChanges();
+    component.playlist_id = 'playlist-1';
+    component.file_objs = [{
+      uid: 'f1',
+      title: 'A video',
+      isAudio: false,
+      url: 'https://example.com/video'
+    } as DatabaseFile];
+    component.uids = ['f1'];
+    component.parseFileNames();
+    expect(component.show_player).toBe(true);
+  }
+
+  it('should give every action bar button an accessible name', () => {
+    showPlayer();
+    component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as any;
+    fixture.detectChanges();
+
+    const buttons = actionBarButtons();
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      // An icon on its own says nothing to a screen reader, and said nothing on hover
+      // either until each of these carried a name.
+      expect(button.getAttribute('aria-label')).toBeTruthy();
+    }
+  });
+
+  it('should name the playlist download for what it actually downloads', () => {
+    showPlayer();
+    component.db_playlist = {id: 'p1', name: 'A playlist', uids: ['f1']} as any;
+    fixture.detectChanges();
+
+    const download = actionBarButtons()
+      .find(button => button.querySelector('mat-icon')?.textContent.trim() === 'folder_zip');
+    expect(download).toBeDefined();
+    // A floppy disk said nothing about scope; both the icon and the name now do.
+    expect(download.getAttribute('aria-label')).toBe('Download the whole playlist as a zip');
+  });
+
+  it('should mark only the engaged playback toggles', () => {
+    showPlayer();
+    component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as any;
+    component.autoplay_enabled = true;
+    component.repeat_enabled = false;
+    fixture.detectChanges();
+
+    const toggles = actionBarButtons().filter(button => button.classList.contains('playback-mode-button'));
+    const autoplay = toggles.find(button => button.getAttribute('aria-label') === 'Autoplay');
+    const repeat = toggles.find(button => button.getAttribute('aria-label') === 'Repeat current video');
+    // Idle toggles carry no marker at all, so they render at the same colour as the
+    // actions beside them rather than dimmed.
+    expect(autoplay.classList.contains('active')).toBe(true);
+    expect(repeat.classList.contains('active')).toBe(false);
+  });
+
+  it('should mark playback toggles as pressed for assistive tech', () => {
+    showPlayer();
+    component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as any;
+    component.autoplay_enabled = true;
+    component.repeat_enabled = false;
+    fixture.detectChanges();
+
+    const toggles = actionBarButtons().filter(button => button.classList.contains('playback-mode-button'));
+    const autoplay = toggles.find(button => button.getAttribute('aria-label') === 'Autoplay');
+    const repeat = toggles.find(button => button.getAttribute('aria-label') === 'Repeat current video');
+    expect(autoplay.getAttribute('aria-pressed')).toBe('true');
+    expect(repeat.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('should create', () => {

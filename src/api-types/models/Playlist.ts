@@ -2,8 +2,6 @@
 /* tslint:disable */
 /* eslint-disable */
 
-import type { FileType } from './FileType';
-
 export type Playlist = {
     name: string;
     uids: Array<string>;
@@ -19,9 +17,13 @@ export type Playlist = {
      * the thumbnail endpoint expects.
      */
     thumbnailFileUid?: string;
-    type: FileType;
     registered: number;
     duration: number;
+    /**
+     * How many files the playlist holds. Only automatic playlists carry it, as they
+     * have no uids array to count; for a normal playlist, count uids.
+     */
+    file_count?: number;
     user_uid?: string;
     auto?: boolean;
     sharingEnabled?: boolean;

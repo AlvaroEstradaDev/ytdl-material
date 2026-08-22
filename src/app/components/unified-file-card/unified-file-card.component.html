@@ -44,12 +44,10 @@
       @if (file_obj.sub_id) {
         <button (click)="navigateToSubscription()" mat-menu-item><mat-icon>{{file_obj.isAudio ? 'library_music' : 'video_library'}}</mat-icon>&nbsp;<ng-container i18n="Go to subscription menu item">Go to subscription</ng-container></button>
       }
-      <button [disabled]="!availablePlaylists || availablePlaylists.length === 0" [matMenuTriggerFor]="addtoplaylist" mat-menu-item><mat-icon>playlist_add</mat-icon>&nbsp;<ng-container i18n="Add to playlist menu item">Add to playlist</ng-container></button>
+      <button [disabled]="playlistsToAddTo.length === 0" [matMenuTriggerFor]="addtoplaylist" mat-menu-item><mat-icon>playlist_add</mat-icon>&nbsp;<ng-container i18n="Add to playlist menu item">Add to playlist</ng-container></button>
       <mat-menu #addtoplaylist="matMenu">
-        @for (playlist of availablePlaylists; track playlist.id) {
-          @if ((playlist.type === 'audio') === file_obj.isAudio) {
-            <button [disabled]="$safeNavigationMigration(playlist.uids?.includes(file_obj.uid))" (click)="emitAddFileToPlaylist(playlist.id)" mat-menu-item>{{playlist.name}}</button>
-          }
+        @for (playlist of playlistsToAddTo; track playlist.id) {
+          <button [disabled]="playlistContainsFile(playlist)" (click)="emitAddFileToPlaylist(playlist.id)" mat-menu-item>{{playlist.name}}</button>
         }
       </mat-menu>
       <mat-divider></mat-divider>
@@ -98,7 +96,14 @@
       }
 
       @if (!loading) {
-        <span [ngClass]="{'max-two-lines': card_size !== 'small', 'max-one-line': card_size === 'small' }">{{card_size === 'large' && file_obj.uploader ? file_obj.uploader + ' - ' : ''}}<strong>{{!is_playlist ? file_obj.title : file_obj.name}}</strong></span>
+        @if (showPlaylistItemCount) {
+          <div class="playlist-text">
+            <span class="max-one-line"><strong>{{file_obj.name}}</strong></span>
+            <span class="playlist-item-count">{{playlistItemCountLabel}}</span>
+          </div>
+        } @else {
+          <span [ngClass]="{'max-two-lines': card_size !== 'small', 'max-one-line': card_size === 'small' }">{{card_size === 'large' && file_obj.uploader ? file_obj.uploader + ' - ' : ''}}<strong>{{!is_playlist ? file_obj.title : file_obj.name}}</strong></span>
+        }
       }
       @if (loading) {
         <span class="title-loading"><content-loader [backgroundColor]="theme.ghost_primary" [foregroundColor]="theme.ghost_secondary" viewBox="0 0 250 30"><svg:rect x="0" y="0" rx="3" ry="3" width="250" height="30" /></content-loader></span>
