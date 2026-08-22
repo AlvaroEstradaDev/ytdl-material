@@ -9,7 +9,7 @@ import localeES from '@angular/common/locales/es';
 import localeDE from '@angular/common/locales/de';
 import localeZH from '@angular/common/locales/zh';
 import localeNB from '@angular/common/locales/nb';
-import { DatabaseFile } from 'api-types';
+import { DatabaseFile, Playlist } from 'api-types';
 
 registerLocaleData(localeGB);
 registerLocaleData(localeFR);
@@ -138,6 +138,22 @@ export class UnifiedFileCardComponent implements OnInit {
    */
   get showPlaylistItemCount(): boolean {
     return this.card_size !== 'small' && this.playlistItemCountLabel !== null;
+  }
+
+  /**
+   * Every playlist can hold every file. The menu used to offer only playlists whose type
+   * matched the file's, but a playlist's type is never written -- so the comparison came
+   * down to "the file is strictly video", and the menu opened empty for audio and for any
+   * older record with no isAudio at all. Nothing else in the app draws that distinction:
+   * the create and edit dialog picks from every file regardless of type, and the player
+   * types each item as it plays it.
+   */
+  get playlistsToAddTo(): Playlist[] {
+    return Array.isArray(this.availablePlaylists) ? this.availablePlaylists : [];
+  }
+
+  playlistContainsFile(playlist: Playlist): boolean {
+    return Array.isArray(playlist?.uids) && playlist.uids.includes(this.file_obj?.uid);
   }
 
   private hasDisplayableUploadDate(): boolean {

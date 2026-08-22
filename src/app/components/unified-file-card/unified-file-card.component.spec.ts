@@ -2,6 +2,8 @@ import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { ComponentFixture, TestBed, waitForAsync } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
+import { MatMenuTrigger } from '@angular/material/menu';
+import { OverlayContainer } from '@angular/cdk/overlay';
 
 import { UnifiedFileCardComponent } from './unified-file-card.component';
 import { configureTestBed } from '../../../testing/test-bed';
@@ -28,6 +30,78 @@ describe('UnifiedFileCardComponent', () => {
       ghost_primary: '#000000',
       ghost_secondary: '#111111'
     } as any;
+  });
+
+
+  // "Add to playlist" is a nested lazy menu inside the card's own lazy action menu, so both
+  // have to be opened before the playlist buttons exist anywhere to assert on.
+  function openAddToPlaylistMenu(): HTMLButtonElement[] {
+    const outer = fixture.debugElement.query(By.css('button.menuButton'));
+    outer.injector.get(MatMenuTrigger).openMenu();
+    fixture.detectChanges();
+
+    const nested = fixture.debugElement.queryAll(By.directive(MatMenuTrigger))
+      .find(candidate => candidate.nativeElement.textContent.includes('Add to playlist'));
+    expect(nested).toBeDefined();
+    nested.injector.get(MatMenuTrigger).openMenu();
+    fixture.detectChanges();
+
+    const panels = TestBed.inject(OverlayContainer).getContainerElement()
+      .querySelectorAll('.mat-mdc-menu-panel');
+    const playlist_panel = panels[panels.length - 1];
+    return Array.from(playlist_panel.querySelectorAll('button.mat-mdc-menu-item'));
+  }
+
+  function setUpFileCard(file_obj: any, playlists: any[] = [{id: 'p1', name: 'Alpha', uids: []}, {id: 'p2', name: 'Beta', uids: []}]): void {
+    component.loading = false;
+    component.is_playlist = false;
+    component.availablePlaylists = playlists as any;
+    component.file_obj = file_obj;
+    fixture.detectChanges();
+  }
+
+  it('should offer every playlist for a video file', () => {
+    setUpFileCard({uid: 'f1', title: 'A video', isAudio: false, registered: Date.now(), duration: 5});
+
+    expect(openAddToPlaylistMenu().map(button => button.textContent.trim())).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('should offer every playlist for an audio file', () => {
+    // A playlist's type is never written, so matching the file's type against it left this
+    // menu empty for everything that was not strictly video.
+    setUpFileCard({uid: 'f1', title: 'A song', isAudio: true, registered: Date.now(), duration: 5});
+
+    expect(openAddToPlaylistMenu().map(button => button.textContent.trim())).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('should offer every playlist for a record that has no isAudio at all', () => {
+    setUpFileCard({uid: 'f1', title: 'An older record', registered: Date.now(), duration: 5});
+
+    expect(openAddToPlaylistMenu().map(button => button.textContent.trim())).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('should disable a playlist that already holds the file', () => {
+    setUpFileCard(
+      {uid: 'f1', title: 'A video', isAudio: false, registered: Date.now(), duration: 5},
+      [{id: 'p1', name: 'Holds it', uids: ['f1']}, {id: 'p2', name: 'Does not', uids: ['other']}]
+    );
+
+    const buttons = openAddToPlaylistMenu();
+    expect(buttons.map(button => button.textContent.trim())).toEqual(['Holds it', 'Does not']);
+    expect(buttons[0].disabled).toBe(true);
+    expect(buttons[1].disabled).toBe(false);
+  });
+
+  it('should leave a playlist enabled when it carries no uids array', () => {
+    component.file_obj = {uid: 'f1'} as any;
+
+    expect(component.playlistContainsFile({name: 'No uids'} as any)).toBe(false);
+  });
+
+  it('should treat a missing playlist list as nothing to add to', () => {
+    component.availablePlaylists = null;
+
+    expect(component.playlistsToAddTo).toEqual([]);
   });
 
   it('should create', () => {
