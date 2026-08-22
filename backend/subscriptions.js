@@ -1590,7 +1590,6 @@ async function generateArgsForSubscription(sub, user_uid, redownload = false, de
 
     return downloadConfig;
 }
-exports.generateArgsForSubscription = generateArgsForSubscription;
 
 exports.generateArgsForSubscription = generateArgsForSubscription;
 

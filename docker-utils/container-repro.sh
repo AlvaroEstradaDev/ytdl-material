@@ -99,7 +99,6 @@ RUN_ARGS=(
     -e ytdl_default_downloader=yt-dlp
     -e ytdl_ytdlp_update_channel="$CHANNEL"
     -e ytdl_use_local_db=true
-    -e write_ytdl_config=true
     -v "${VOLUME}:/app/appdata"
 )
 
