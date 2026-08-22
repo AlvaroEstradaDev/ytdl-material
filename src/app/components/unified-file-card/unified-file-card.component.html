@@ -98,7 +98,14 @@
       }
 
       @if (!loading) {
-        <span [ngClass]="{'max-two-lines': card_size !== 'small', 'max-one-line': card_size === 'small' }">{{card_size === 'large' && file_obj.uploader ? file_obj.uploader + ' - ' : ''}}<strong>{{!is_playlist ? file_obj.title : file_obj.name}}</strong></span>
+        @if (showPlaylistItemCount) {
+          <div class="playlist-text">
+            <span class="max-one-line"><strong>{{file_obj.name}}</strong></span>
+            <span class="playlist-item-count">{{playlistItemCountLabel}}</span>
+          </div>
+        } @else {
+          <span [ngClass]="{'max-two-lines': card_size !== 'small', 'max-one-line': card_size === 'small' }">{{card_size === 'large' && file_obj.uploader ? file_obj.uploader + ' - ' : ''}}<strong>{{!is_playlist ? file_obj.title : file_obj.name}}</strong></span>
+        }
       }
       @if (loading) {
         <span class="title-loading"><content-loader [backgroundColor]="theme.ghost_primary" [foregroundColor]="theme.ghost_secondary" viewBox="0 0 250 30"><svg:rect x="0" y="0" rx="3" ry="3" width="250" height="30" /></content-loader></span>

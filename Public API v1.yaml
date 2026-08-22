@@ -3079,6 +3079,11 @@ components:
           type: number
         duration:
           type: number
+        file_count:
+          type: number
+          description: >-
+            How many files the playlist holds. Only automatic playlists carry it, as they
+            have no uids array to count; for a normal playlist, count uids.
         user_uid:
           type: string
         auto:

@@ -305,6 +305,9 @@ async function getCategoriesAsPlaylists(user_uid = null) {
         // The thumbnail endpoint takes a file uid, so say which file it is borrowing from.
         category_playlist['thumbnailFileUid'] = files_that_match[0].uid;
         category_playlist['duration'] = files_that_match.reduce((a, b) => a + utils.durationStringToNumber(b.duration), 0);
+        // A category has no uids array, so a caller cannot count its contents the way it
+        // counts a real playlist's. Carry the count instead.
+        category_playlist['file_count'] = files_that_match.length;
         category_playlist['id'] = category_playlist['uid'];
         category_playlist['auto'] = true;
         categories_as_playlists.push(category_playlist);

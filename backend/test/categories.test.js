@@ -130,6 +130,31 @@ describe('Categories', async function() {
         }
     });
 
+    it('Categories as playlists - carries a file count', async function() {
+        const category = await db_api.getRecord('categories', {name: 'test_category'});
+        const categorized_uids = ['category-count-1', 'category-count-2', 'category-count-3'];
+        try {
+            for (const categorized_uid of categorized_uids) {
+                await db_api.insertRecordIntoTable('files', {
+                    ...sample_video_json,
+                    uid: categorized_uid,
+                    category: {uid: category['uid'], name: category['name']}
+                });
+            }
+
+            const categories_as_playlists = await categories_api.getCategoriesAsPlaylists();
+            const category_playlist = categories_as_playlists.find(playlist => playlist['name'] === 'test_category');
+
+            // A category has no uids array, so the count is the only way a caller can say
+            // how much it holds.
+            assert(category_playlist);
+            assert.strictEqual(category_playlist['uids'], undefined);
+            assert.strictEqual(category_playlist['file_count'], categorized_uids.length);
+        } finally {
+            await db_api.removeAllRecords('files', {uid: {$in: categorized_uids}});
+        }
+    });
+
     it('Create default categories', async function() {
         await db_api.removeAllRecords('categories');
         try {
