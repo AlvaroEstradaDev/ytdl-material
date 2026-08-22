@@ -2,8 +2,6 @@
 /* tslint:disable */
 /* eslint-disable */
 
-import type { FileType } from './FileType';
-
 export type Playlist = {
     name: string;
     uids: Array<string>;
@@ -19,7 +17,6 @@ export type Playlist = {
      * the thumbnail endpoint expects.
      */
     thumbnailFileUid?: string;
-    type: FileType;
     registered: number;
     duration: number;
     /**
