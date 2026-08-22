@@ -1,7 +1,7 @@
 ---
 name: Bug report
 about: Create a report to help us improve
-title: "[BUG]"
+title: "bug: "
 labels: triage
 assignees: ''
 
@@ -31,9 +31,9 @@ If applicable, add screenshots to help explain your problem.
 Ideally you'd copy the info as presented on the "About" dialogue
 in ytdl-material.
 (for that, click on the three dots on the top right and then
-check "installation details". On later versions of YoutubeDL-
-Material you will find pretty much all the crucial information
-here that we need in most cases!)
+check "installation details". On later versions you will find
+pretty much all the crucial information here that we need in
+most cases!)
 
 **Additional context**
-Add any other context about the problem here. For example, a YouTube link.
+Add any other context about the problem here. For example, the source link.
