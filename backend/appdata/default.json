@@ -23,7 +23,8 @@
       "skip_join_only_videos": false,
       "audio-format": "mp3",
       "use_ytdlp_impersonation": false,
-      "use_extractor_client_fallback": false
+      "transcoding": false,
+      "js_runtimes": ""
     },
     "Extra": {
       "title_top": "ytdl-material",
@@ -119,7 +120,6 @@
       "use_default_downloading_agent": true,
       "custom_downloading_agent": "",
       "multi_user_mode": false,
-      "allow_advanced_download": false,
       "use_cookies": false,
       "jwt_expiration": 86400,
       "logger_level": "info"

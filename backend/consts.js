@@ -90,9 +90,13 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_use_ytdlp_impersonation',
         'path': 'YtdlMaterial.Downloader.use_ytdlp_impersonation'
     },
-    'ytdl_use_extractor_client_fallback': {
-        'key': 'ytdl_use_extractor_client_fallback',
-        'path': 'YtdlMaterial.Downloader.use_extractor_client_fallback'
+    'ytdl_js_runtimes': {
+        'key': 'ytdl_js_runtimes',
+        'path': 'YtdlMaterial.Downloader.js_runtimes'
+    },
+    'ytdl_transcoding': {
+        'key': 'ytdl_transcoding',
+        'path': 'YtdlMaterial.Downloader.transcoding'
     },
 
     // Extra
@@ -381,10 +385,6 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_multi_user_mode',
         'path': 'YtdlMaterial.Advanced.multi_user_mode'
     },
-    'ytdl_allow_advanced_download': {
-        'key': 'ytdl_allow_advanced_download',
-        'path': 'YtdlMaterial.Advanced.allow_advanced_download'
-    },
     'ytdl_use_cookies': {
         'key': 'ytdl_use_cookies',
         'path': 'YtdlMaterial.Advanced.use_cookies'
@@ -468,6 +468,8 @@ const YTDL_ARGS_WITH_VALUES = [
     '--max-sleep-interval',
     '-f',
     '--format',
+    '-S',
+    '--format-sort',
     '--merge-output-format',
     '--sub-format',
     '--sub-lang',
@@ -497,4 +499,4 @@ exports.SUBSCRIPTION_BACKUP_PATH = 'subscription_backup.json'
 // we're using a Set here for performance
 exports.YTDL_ARGS_WITH_VALUES = new Set(YTDL_ARGS_WITH_VALUES);
 
-exports.CURRENT_VERSION = 'v1.0.7';
+exports.CURRENT_VERSION = 'v1.0.8';

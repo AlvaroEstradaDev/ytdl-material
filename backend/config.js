@@ -51,9 +51,53 @@ function normalizeConfigRoot(config_json) {
     return {normalized_config: config_json, migrated: true};
 }
 
+// Settings that no longer exist. They are stripped from the config on startup so they do
+// not linger as dead keys, and anyone who had one enabled gets told what replaced it
+// rather than silently losing the behavior.
+const RETIRED_CONFIG_ITEMS = [
+    {
+        path: 'YtdlMaterial.Downloader.use_extractor_client_fallback',
+        enabled_warning: 'The \'use extractor client fallback\' setting has been removed. It always applied a fixed'
+            + ' yt-dlp client list (--extractor-args youtube:player_client=tv,web) which no longer works and now'
+            + ' causes the HTTP 403 download errors it was meant to prevent. yt-dlp now selects its own clients.'
+            + ' If you still need to pin one, add it to your global custom args, for example:'
+            + ' --extractor-args,,youtube:player_client=default'
+    },
+    {
+        path: 'YtdlMaterial.Advanced.allow_advanced_download',
+        disabled_warning: 'The \'allow advanced download\' setting has been removed. Advanced download options are'
+            + ' now always available from the Download button menu, so users who previously could not reach them'
+            + ' will see them. Access is still controlled by the \'advanced_download\' user permission, which can'
+            + ' be revoked per role under Settings if you want to keep it hidden.'
+    }
+];
+
 exports.initialize = () => {
     ensureConfigFileExists();
+    removeRetiredConfigItems();
     ensureConfigItemsExist();
+}
+
+function removeRetiredConfigItems() {
+    const config_json = exports.getConfigFile();
+    if (!config_json) return;
+
+    let removed_any = false;
+    for (const retired_item of RETIRED_CONFIG_ITEMS) {
+        const parent_object = Object.byString(config_json, getParentPath(retired_item.path));
+        const element_name = getElementNameInConfig(retired_item.path);
+        if (!parent_object || !(element_name in parent_object)) continue;
+
+        // Which stored value is worth warning about depends on the setting: removing an
+        // opt-in matters to whoever turned it on, removing an opt-out matters to whoever
+        // turned it off.
+        const stored_warning = parent_object[element_name] ? retired_item.enabled_warning : retired_item.disabled_warning;
+        if (stored_warning) logger.warn(stored_warning);
+        delete parent_object[element_name];
+        removed_any = true;
+    }
+
+    if (removed_any) exports.setConfigFile(config_json);
 }
 
 function ensureConfigItemsExist() {
@@ -264,7 +308,8 @@ const DEFAULT_CONFIG = {
         "skip_join_only_videos": false,
         "audio-format": "mp3",
         "use_ytdlp_impersonation": false,
-        "use_extractor_client_fallback": false
+        "js_runtimes": "",
+        "transcoding": false
       },
       "Extra": {
         "title_top": "ytdl-material",
@@ -354,7 +399,6 @@ const DEFAULT_CONFIG = {
         "use_default_downloading_agent": true,
         "custom_downloading_agent": "",
         "multi_user_mode": false,
-        "allow_advanced_download": false,
         "use_cookies": false,
         "jwt_expiration": 86400,
         "logger_level": "info"
