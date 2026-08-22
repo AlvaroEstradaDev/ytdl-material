@@ -22,7 +22,8 @@
       "download_rate_limit": "",
       "audio-format": "mp3",
       "skip_join_only_videos": false,
-      "use_ytdlp_impersonation": false
+      "use_ytdlp_impersonation": false,
+      "use_extractor_client_fallback": false
     },
     "Extra": {
       "title_top": "ytdl-material",

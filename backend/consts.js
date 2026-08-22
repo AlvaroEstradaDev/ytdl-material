@@ -90,6 +90,10 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_use_ytdlp_impersonation',
         'path': 'YtdlMaterial.Downloader.use_ytdlp_impersonation'
     },
+    'ytdl_use_extractor_client_fallback': {
+        'key': 'ytdl_use_extractor_client_fallback',
+        'path': 'YtdlMaterial.Downloader.use_extractor_client_fallback'
+    },
 
     // Extra
     'ytdl_title_top': {
@@ -493,4 +497,4 @@ exports.SUBSCRIPTION_BACKUP_PATH = 'subscription_backup.json'
 // we're using a Set here for performance
 exports.YTDL_ARGS_WITH_VALUES = new Set(YTDL_ARGS_WITH_VALUES);
 
-exports.CURRENT_VERSION = 'v1.0.6';
+exports.CURRENT_VERSION = 'v1.0.7';
