@@ -129,6 +129,29 @@
   position: absolute;
 }
 
+.playlist-text {
+  bottom: 5px;
+  position: absolute;
+  width: calc(100% - 10px);
+}
+
+/* A title anchors itself to the bottom of the card. Inside this block the block does the
+   anchoring instead, so the count can sit on its own line underneath the title.
+   The clamp is set to the one line max-height already allows, so an overlong name ends in
+   an ellipsis rather than being cut off at the edge of the card. */
+.playlist-text .max-one-line {
+  bottom: auto;
+  position: static;
+  -webkit-line-clamp: 1;
+}
+
+.playlist-item-count {
+  display: block;
+  font-size: 0.75em;
+  line-height: 1.2em;
+  opacity: 0.7;
+}
+
 .duration-time {
   position: absolute;
   bottom: 5px;
