@@ -2147,6 +2147,9 @@ exports.updateSubscription = async (sub, user_uid = null) => {
 
     const updated = await db_api.updateRecord('subscriptions', filter_obj, sub);
     if (!updated) return false;
+    if (sub['auto_create_playlist'] === true) {
+        await files_api.syncSubscriptionPlaylist(sub.id, user_uid);
+    }
     exports.writeSubscriptionMetadata(sub);
     await cleanupSubscriptionPathChange(current_sub, sub, user_uid);
     return true;

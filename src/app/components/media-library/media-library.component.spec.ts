@@ -49,6 +49,7 @@ describe('MediaLibraryComponent', () => {
       })),
       openSnackBar: vi.fn().mockName('openSnackBar'),
       getAllFiles: vi.fn().mockName('getAllFiles').mockReturnValue(of({ files: [], file_count: 0 })),
+      getAllSubscriptions: vi.fn().mockName('getAllSubscriptions').mockReturnValue(of({ subscriptions: [] })),
       getPlaylists: vi.fn().mockName('getPlaylists').mockReturnValue(of({ playlists: [] })),
       files_changed: new BehaviorSubject(false),
       playlists_changed: new BehaviorSubject(false),
@@ -114,6 +115,55 @@ describe('MediaLibraryComponent', () => {
     expect(postsServiceStub.getAllFiles).toHaveBeenCalledWith({ by: 'registered', order: -1 }, [0, 12], null, 'both', false, null, false, []);
     expect(component.paged_data.length).toBe(2);
     expect(component.file_count).toBe(40);
+  });
+
+  it('should load the complete library in playlist selection mode', () => {
+    component.selectMode = true;
+    component.usePaginator = false;
+
+    component.getAllFiles();
+
+    expect(postsServiceStub.getAllFiles).toHaveBeenCalledWith(
+      { by: 'registered', order: -1 }, null, null, 'both', false, null, false, []
+    );
+  });
+
+  it('should filter playlist candidates by subscription source', () => {
+    component.selectMode = true;
+    component.usePaginator = false;
+
+    component.selectionSourceChanged('subscription-1');
+
+    expect(component.sub_id).toBe('subscription-1');
+    expect(postsServiceStub.getAllFiles).toHaveBeenCalledWith(
+      { by: 'registered', order: -1 }, null, null, 'both', false, 'subscription-1', false, []
+    );
+  });
+
+  it('should select hundreds of loaded playlist candidates without duplicates', () => {
+    const selection_emitter = vi.spyOn(component.fileSelectionEmitter, 'emit');
+    component.paged_data = Array.from({length: 300}, (_, index) => ({
+      uid: `file-${index}`,
+      thumbnailURL: `https://example.com/${index}.jpg`
+    })) as any;
+
+    component.selectAllAvailableFiles();
+    component.selectAllAvailableFiles();
+
+    expect(component.selected_data.length).toBe(300);
+    expect(new Set(component.selected_data).size).toBe(300);
+    expect(selection_emitter).toHaveBeenLastCalledWith({
+      new_selection: component.selected_data,
+      thumbnailURL: 'https://example.com/0.jpg'
+    });
+  });
+
+  it('should clear an empty playlist selection without requiring a thumbnail', () => {
+    const selection_emitter = vi.spyOn(component.fileSelectionEmitter, 'emit');
+
+    component.clearFileSelection();
+
+    expect(selection_emitter).toHaveBeenCalledWith({new_selection: [], thumbnailURL: null});
   });
 
   it('should append the next auto-pagination batch without duplicating files', () => {

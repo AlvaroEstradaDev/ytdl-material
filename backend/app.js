@@ -1871,6 +1871,7 @@ app.post('/api/subscribe', optionalJwt, requirePermission('subscriptions'), asyn
     let customArgs = req.body.customArgs;
     let customOutput = req.body.customFileOutput;
     let useSubfolder = req.body.useSubfolder;
+    let autoCreatePlaylist = req.body.autoCreatePlaylist;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
     const new_sub = {
                         name: name,
@@ -1879,7 +1880,8 @@ app.post('/api/subscribe', optionalJwt, requirePermission('subscriptions'), asyn
                         id: uuid(),
                         user_uid: user_uid,
                         type: audioOnly ? 'audio' : 'video',
-                        use_subfolder: useSubfolder !== false
+                        use_subfolder: useSubfolder !== false,
+                        auto_create_playlist: autoCreatePlaylist === true
                     };
 
     // adds timerange if it exists, otherwise all videos will be downloaded

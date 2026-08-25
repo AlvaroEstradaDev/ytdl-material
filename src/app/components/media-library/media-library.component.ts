@@ -1,7 +1,7 @@
 import { Component, ElementRef, EventEmitter, HostListener, Input, NgZone, OnDestroy, OnInit, Output, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { PostsService } from 'app/posts.services';
 import { Router } from '@angular/router';
-import { Category, DatabaseFile, DeletePlaylistResponse, FileType, FileTypeFilter, Playlist, Sort } from 'api-types';
+import { Category, DatabaseFile, DeletePlaylistResponse, FileType, FileTypeFilter, Playlist, Sort, Subscription } from 'api-types';
 import { Subject } from 'rxjs';
 import { debounceTime, distinctUntilChanged, filter, take, takeUntil } from 'rxjs/operators';
 import { CdkDragDrop, moveItemInArray } from '@angular/cdk/drag-drop';
@@ -61,7 +61,7 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
   @Input() sub_id = null;
   @Input() customHeader = null;
   @Input() selectedIndex = 1;
-  @Output() fileSelectionEmitter = new EventEmitter<{new_selection: string[], thumbnailURL: string}>();
+  @Output() fileSelectionEmitter = new EventEmitter<{new_selection: string[], thumbnailURL: string | null}>();
 
   pageSize = 10;
   paged_data: DatabaseFile[] = null;
@@ -72,6 +72,8 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
   selected_data: string[] = [];
   selected_data_objs: DatabaseFile[] = [];
   reverse_order = false;
+  selection_sources: Subscription[] = [];
+  selection_sources_received = false;
 
   // File listing (with cards)
 
@@ -219,6 +221,7 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
     }
 
     const initializeLibrary = () => {
+      if (this.selectMode) this.getSelectionSources();
       const restored_from_navigation = this.restoreLibraryFromNavigationState();
       if (!restored_from_navigation) {
         this.getAllFiles();
@@ -1577,7 +1580,54 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
       this.selected_data_objs = this.selected_data_objs.filter(e => e.uid !== value.uid);
     }
 
-    this.fileSelectionEmitter.emit({new_selection: this.selected_data, thumbnailURL: this.selected_data_objs[0].thumbnailURL});
+    this.emitFileSelection();
+  }
+
+  getSelectionSources(): void {
+    this.postsService.getAllSubscriptions().subscribe(res => {
+      this.selection_sources = res['subscriptions'] || [];
+      this.selection_sources_received = true;
+    }, () => {
+      this.selection_sources = [];
+      this.selection_sources_received = true;
+    });
+  }
+
+  selectionSourceChanged(sub_id: string | null): void {
+    this.sub_id = sub_id || null;
+    this.manualPageIndex = 0;
+    this.paged_data = [];
+    this.normal_files_received = false;
+    this.getAllFiles();
+  }
+
+  selectAllAvailableFiles(): void {
+    const selected_uids = new Set(this.selected_data);
+    for (const file of this.paged_data || []) {
+      if (selected_uids.has(file.uid)) continue;
+      selected_uids.add(file.uid);
+      this.selected_data.push(file.uid);
+      this.selected_data_objs.push(file);
+    }
+    this.emitFileSelection();
+  }
+
+  clearFileSelection(): void {
+    this.selected_data = [];
+    this.selected_data_objs = [];
+    this.emitFileSelection();
+  }
+
+  allAvailableFilesSelected(): boolean {
+    return (this.paged_data?.length ?? 0) > 0
+      && this.paged_data.every(file => this.selected_data.includes(file.uid));
+  }
+
+  private emitFileSelection(): void {
+    this.fileSelectionEmitter.emit({
+      new_selection: this.selected_data,
+      thumbnailURL: this.selected_data_objs[0]?.thumbnailURL ?? null
+    });
   }
 
   toggleSelectionOrder(): void {
@@ -1592,7 +1642,7 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
     }
     moveItemInArray(this.selected_data, event.previousIndex, event.currentIndex);
     moveItemInArray(this.selected_data_objs, event.previousIndex, event.currentIndex);
-    this.fileSelectionEmitter.emit({new_selection: this.selected_data, thumbnailURL: this.selected_data_objs[0].thumbnailURL});
+    this.emitFileSelection();
   }
 
   removeSelectedFile(index: number): void {
@@ -1601,7 +1651,7 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
     }
     this.selected_data.splice(index, 1);
     this.selected_data_objs.splice(index, 1);
-    this.fileSelectionEmitter.emit({new_selection: this.selected_data, thumbnailURL: this.selected_data_objs[0].thumbnailURL});
+    this.emitFileSelection();
   }
 
   toggleFavorite(file_obj): void {
