@@ -209,15 +209,22 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.refreshScrollListener();
 
+    // Playlist selection does not expose the library filter controls. Inputs are
+    // assigned after construction, so clear any persisted filters here rather than
+    // letting an invisible audio/favorite/category filter omit candidates.
+    if (this.selectMode) this.selectedFilters = [];
+
     if (this.sub_id) {
       // subscriptions can't download both audio and video (for now), so don't let users filter for these
       delete this.fileFilters['audio_only'];
       delete this.fileFilters['video_only'];
     }
 
-    this.pendingNavigationRestoreState = this.mediaLibraryNavigationState.consumePendingRestoreState(this.getCurrentRouteKey(), this.sub_id);
-    if (this.pendingNavigationRestoreState) {
-      this.applyRestoredNavigationSnapshot(this.pendingNavigationRestoreState.snapshot);
+    if (!this.selectMode) {
+      this.pendingNavigationRestoreState = this.mediaLibraryNavigationState.consumePendingRestoreState(this.getCurrentRouteKey(), this.sub_id);
+      if (this.pendingNavigationRestoreState) {
+        this.applyRestoredNavigationSnapshot(this.pendingNavigationRestoreState.snapshot);
+      }
     }
 
     const initializeLibrary = () => {
@@ -1595,6 +1602,9 @@ export class MediaLibraryComponent implements OnInit, OnDestroy {
 
   selectionSourceChanged(sub_id: string | null): void {
     this.sub_id = sub_id || null;
+    // If the previous source is still loading, its response must not repopulate the
+    // selector while the replacement request is queued.
+    this.latestFileRequestId += 1;
     this.manualPageIndex = 0;
     this.paged_data = [];
     this.normal_files_received = false;

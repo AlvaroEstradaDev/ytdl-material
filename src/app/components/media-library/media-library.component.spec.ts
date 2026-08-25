@@ -128,6 +128,21 @@ describe('MediaLibraryComponent', () => {
     );
   });
 
+  it('should ignore persisted library filters in playlist selection mode', () => {
+    localStorage.setItem('file_filter', JSON.stringify(['audio_only', 'favorited']));
+    fixture = TestBed.createComponent(MediaLibraryComponent);
+    component = fixture.componentInstance;
+    component.selectMode = true;
+    component.usePaginator = false;
+
+    component.ngOnInit();
+
+    expect(component.selectedFilters).toEqual([]);
+    expect(postsServiceStub.getAllFiles).toHaveBeenCalledWith(
+      { by: 'registered', order: -1 }, null, null, 'both', false, null, false, []
+    );
+  });
+
   it('should filter playlist candidates by subscription source', () => {
     component.selectMode = true;
     component.usePaginator = false;
@@ -138,6 +153,31 @@ describe('MediaLibraryComponent', () => {
     expect(postsServiceStub.getAllFiles).toHaveBeenCalledWith(
       { by: 'registered', order: -1 }, null, null, 'both', false, 'subscription-1', false, []
     );
+  });
+
+  it('should not apply an earlier source response after the source changes', () => {
+    const initial_response = new Subject<any>();
+    const filtered_response = new Subject<any>();
+    postsServiceStub.getAllFiles
+      .mockReturnValueOnce(initial_response.asObservable())
+      .mockReturnValueOnce(filtered_response.asObservable());
+    component.selectMode = true;
+    component.usePaginator = false;
+
+    component.getAllFiles();
+    component.selectionSourceChanged('subscription-1');
+    initial_response.next({files: [{uid: 'wrong-source'}], file_count: 1});
+    initial_response.complete();
+
+    expect(component.paged_data).toEqual([]);
+    expect(postsServiceStub.getAllFiles).toHaveBeenLastCalledWith(
+      { by: 'registered', order: -1 }, null, null, 'both', false, 'subscription-1', false, []
+    );
+
+    filtered_response.next({files: [{uid: 'right-source'}], file_count: 1});
+    filtered_response.complete();
+
+    expect(component.paged_data.map(file => file.uid)).toEqual(['right-source']);
   });
 
   it('should select hundreds of loaded playlist candidates without duplicates', () => {
