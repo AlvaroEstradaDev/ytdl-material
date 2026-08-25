@@ -1073,6 +1073,18 @@ describe('Container archives', function() {
 
         if (zip_path) { await fs.remove(zip_path); }
     });
+
+    it('stops archive creation and deletes the partial file when cancelled', async function() {
+        const zip_path = path.join(media.base, 'cancelled.zip');
+        const controller = new AbortController();
+        const archive_promise = utils.createZipFile(zip_path, [alice_file], {signal: controller.signal});
+
+        controller.abort();
+        const result = await archive_promise;
+
+        assert.strictEqual(result, null);
+        assert.strictEqual(await fs.pathExists(zip_path), false, 'the partial archive should be removed');
+    });
 });
 
 describe('The yt-dlp command line', function() {
