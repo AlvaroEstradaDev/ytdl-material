@@ -8,7 +8,10 @@ import { ShareMediaDialogComponent } from '../dialogs/share-media-dialog/share-m
 import { DatabaseFile, FileType, FileTypeFilter, Playlist, Sort } from '../../api-types';
 import { TwitchChatComponent } from 'app/components/twitch-chat/twitch-chat.component';
 import { VideoInfoDialogComponent } from 'app/dialogs/video-info-dialog/video-info-dialog.component';
+import { ConfirmDialogComponent } from 'app/dialogs/confirm-dialog/confirm-dialog.component';
 import { saveAs } from 'file-saver';
+import { filesize } from 'filesize';
+import { Subscription } from 'rxjs';
 import { filter, take } from 'rxjs/operators';
 
 export interface IMedia {
@@ -99,6 +102,7 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
   name = null;
 
   downloading = false;
+  playlistDownloadSubscription: Subscription | null = null;
 
   save_volume_timer = null;
   original_volume = null;
@@ -177,6 +181,8 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.destroyed = true;
+    this.playlistDownloadSubscription?.unsubscribe();
+    this.playlistDownloadSubscription = null;
     this.subtitleTrackRefreshToken += 1;
     // prevents volume save feature from running in the background
     clearInterval(this.save_volume_timer);
@@ -458,16 +464,48 @@ export class PlayerComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   downloadContent(): void {
+    if (this.downloading) return;
+
+    const file_count = this.db_playlist?.uids?.length ?? this.file_objs.length;
+    const total_size = this.file_objs.reduce((size, file) => size + (Number(file?.size) || 0), 0);
+    const playlist_summary = total_size > 0
+      ? $localize`${file_count}:playlist file count: files, ${filesize(total_size)}:playlist size:`
+      : $localize`${file_count}:playlist file count: files`;
+    const dialogRef = this.dialog.open(ConfirmDialogComponent, {
+      data: {
+        dialogTitle: $localize`Download playlist?`,
+        dialogText: $localize`Download the entire playlist as a zip (${playlist_summary})? Creating the archive can take a while and use significant disk space.`,
+        submitText: $localize`Download`
+      }
+    });
+
+    dialogRef.afterClosed().pipe(take(1)).subscribe(confirmed => {
+      if (confirmed) this.startPlaylistDownload();
+    });
+  }
+
+  startPlaylistDownload(): void {
     const zipName = this.db_playlist.name;
     this.downloading = true;
-    this.postsService.downloadPlaylistFromServer(this.playlist_id, this.uuid).subscribe(res => {
+    this.playlistDownloadSubscription = this.postsService.downloadPlaylistFromServer(this.playlist_id, this.uuid).subscribe(res => {
       this.downloading = false;
+      this.playlistDownloadSubscription = null;
       const blob: Blob = res;
       saveAs(blob, zipName + '.zip');
     }, err => {
       console.error(err);
       this.downloading = false;
+      this.playlistDownloadSubscription = null;
     });
+  }
+
+  cancelPlaylistDownload(): void {
+    if (!this.downloading) return;
+
+    this.playlistDownloadSubscription?.unsubscribe();
+    this.playlistDownloadSubscription = null;
+    this.downloading = false;
+    this.postsService.openSnackBar($localize`Playlist download cancelled.`);
   }
 
   downloadFile(): void {

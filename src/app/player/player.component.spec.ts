@@ -4,6 +4,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, Router, convertToParamMap } from '@angular/router';
 import { VgApiService } from '@videogular/ngx-videogular/core';
+import { Observable, Subject } from 'rxjs';
 import { DatabaseFile } from '../../api-types';
 import { PostsService } from '../posts.services';
 import { IChapter, IMedia, ISubtitleTrack, PlayerComponent } from './player.component';
@@ -13,6 +14,7 @@ describe('PlayerComponent', () => {
   let component: PlayerComponent;
   let fixture: ComponentFixture<PlayerComponent>;
   let postsServiceStub: any;
+  let matDialogStub: any;
 
   beforeEach(waitForAsync(() => {
     postsServiceStub = {
@@ -42,12 +44,15 @@ describe('PlayerComponent', () => {
       },
       sidenav: null
     };
+    matDialogStub = {
+      open: vi.fn().mockName('openDialog')
+    };
 
     configureTestBed({
       declarations: [PlayerComponent],
       providers: [
         { provide: PostsService, useValue: postsServiceStub },
-        { provide: MatDialog, useValue: {} },
+        { provide: MatDialog, useValue: matDialogStub },
         {
           provide: Router,
           useValue: {
@@ -125,6 +130,45 @@ describe('PlayerComponent', () => {
     expect(download).toBeDefined();
     // A floppy disk said nothing about scope; both the icon and the name now do.
     expect(download.getAttribute('aria-label')).toBe('Download the whole playlist as a zip');
+  });
+
+  it('should require confirmation before preparing a playlist archive', () => {
+    const confirmation = new Subject<boolean>();
+    postsServiceStub.downloadPlaylistFromServer = vi.fn().mockName('downloadPlaylistFromServer');
+    matDialogStub.open.mockReturnValue({afterClosed: () => confirmation.asObservable()});
+    component.db_playlist = {id: 'p1', name: 'A playlist', uids: ['f1', 'f2']} as any;
+    component.file_objs = [
+      {uid: 'f1', size: 1024} as DatabaseFile,
+      {uid: 'f2', size: 2048} as DatabaseFile
+    ];
+
+    component.downloadContent();
+
+    expect(postsServiceStub.downloadPlaylistFromServer).not.toHaveBeenCalled();
+    expect(matDialogStub.open.mock.calls[0][1].data.dialogText).toContain('2 files');
+    confirmation.next(false);
+    expect(postsServiceStub.downloadPlaylistFromServer).not.toHaveBeenCalled();
+  });
+
+  it('should abort an in-progress playlist archive request', () => {
+    const confirmation = new Subject<boolean>();
+    const requestTeardown = vi.fn().mockName('playlistRequestTeardown');
+    postsServiceStub.downloadPlaylistFromServer = vi.fn().mockName('downloadPlaylistFromServer').mockReturnValue(
+      new Observable(() => requestTeardown)
+    );
+    matDialogStub.open.mockReturnValue({afterClosed: () => confirmation.asObservable()});
+    component.db_playlist = {id: 'p1', name: 'A playlist', uids: ['f1']} as any;
+    component.playlist_id = 'p1';
+
+    component.downloadContent();
+    confirmation.next(true);
+
+    expect(component.downloading).toBe(true);
+    expect(postsServiceStub.downloadPlaylistFromServer).toHaveBeenCalledWith('p1', null);
+    component.cancelPlaylistDownload();
+    expect(requestTeardown).toHaveBeenCalled();
+    expect(component.downloading).toBe(false);
+    expect(postsServiceStub.openSnackBar).toHaveBeenCalledWith('Playlist download cancelled.');
   });
 
   it('should mark only the engaged playback toggles', () => {

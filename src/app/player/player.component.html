@@ -114,8 +114,11 @@
                   <span class="action-buttons-row">
                     @if (db_playlist) {
                       <span class="buttons">
-                        <button (click)="downloadContent()" [disabled]="downloading" matTooltip="Download the whole playlist as a zip" i18n-matTooltip="Download playlist tooltip" aria-label="Download the whole playlist as a zip" i18n-aria-label="Download playlist label" mat-icon-button><mat-icon>folder_zip</mat-icon></button>
+                        @if (!downloading) {
+                          <button (click)="downloadContent()" matTooltip="Download the whole playlist as a zip" i18n-matTooltip="Download playlist tooltip" aria-label="Download the whole playlist as a zip" i18n-aria-label="Download playlist label" mat-icon-button><mat-icon>folder_zip</mat-icon></button>
+                        }
                         @if (downloading) {
+                          <button (click)="cancelPlaylistDownload()" matTooltip="Cancel playlist download" i18n-matTooltip="Cancel playlist download tooltip" aria-label="Cancel playlist download" i18n-aria-label="Cancel playlist download label" mat-icon-button><mat-icon>cancel</mat-icon></button>
                           <mat-spinner class="spinner" [diameter]="35"></mat-spinner>
                         }
                         @if ((!postsService.isLoggedIn || postsService.permissions.includes('sharing')) && !auto) {
