@@ -18,6 +18,7 @@ describe('Subscriptions', function() {
         await db_api.removeAllRecords('download_queue');
         await db_api.removeAllRecords('files');
         await db_api.removeAllRecords('archives');
+        await db_api.removeAllRecords('playlists');
         config_api.setConfigItem('ytdl_allow_subscriptions', true);
         config_api.setConfigItem('ytdl_subscriptions_redownload_fresh_uploads', false);
         config_api.setConfigItem('ytdl_custom_args', '');
@@ -84,6 +85,118 @@ describe('Subscriptions', function() {
         await subscriptions_api.unsubscribe(new_sub);
         const sub_exists = await db_api.getRecord('subscriptions', {id: new_sub['id']});
         assert(!sub_exists);
+    });
+    it('Cleans up an automatic playlist when unsubscribing', async function () {
+        const sub = Object.assign({}, new_sub, {
+            id: uuid(),
+            name: 'unsubscribe_playlist_sub',
+            auto_create_playlist: true
+        });
+        const source_file = {
+            uid: uuid(),
+            sub_id: sub.id,
+            title: 'Subscription file',
+            thumbnailURL: 'https://example.com/source.jpg',
+            duration: 30,
+            registered: 100
+        };
+
+        await db_api.insertRecordIntoTable('subscriptions', sub);
+        await db_api.insertRecordIntoTable('files', source_file);
+        await files_api.syncSubscriptionPlaylist(sub.id);
+        assert(await db_api.getRecord('playlists', {source_sub_id: sub.id}));
+
+        const result = await subscriptions_api.unsubscribe(sub.id, true);
+
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(await db_api.getRecord('playlists', {source_sub_id: sub.id}), undefined);
+    });
+    it('Keeps custom playlist entries when unsubscribing from its automatic source', async function () {
+        const sub = Object.assign({}, new_sub, {
+            id: uuid(),
+            name: 'detach_playlist_sub',
+            auto_create_playlist: true
+        });
+        const source_file = {
+            uid: uuid(),
+            sub_id: sub.id,
+            title: 'Subscription file',
+            thumbnailURL: 'https://example.com/source.jpg',
+            duration: 30,
+            registered: 100
+        };
+        const custom_file = {
+            uid: uuid(),
+            title: 'Custom file',
+            thumbnailURL: 'https://example.com/custom.jpg',
+            duration: 45,
+            registered: 200
+        };
+
+        await db_api.insertRecordIntoTable('subscriptions', sub);
+        await db_api.insertRecordIntoTable('files', source_file);
+        await db_api.insertRecordIntoTable('files', custom_file);
+        let playlist = await files_api.syncSubscriptionPlaylist(sub.id);
+        playlist['uids'].push(custom_file.uid);
+        assert.strictEqual(await files_api.updatePlaylist(playlist), true);
+
+        const result = await subscriptions_api.unsubscribe(sub.id, true);
+
+        assert.strictEqual(result.success, true);
+        playlist = await db_api.getRecord('playlists', {id: playlist.id});
+        assert(playlist);
+        assert.deepStrictEqual(playlist.uids, [custom_file.uid]);
+        assert.strictEqual(playlist.source_sub_id, undefined);
+        assert.strictEqual(playlist.thumbnailURL, custom_file.thumbnailURL);
+        assert.strictEqual(playlist.duration, 45);
+    });
+    it('Does not recreate an automatic playlist when a download finishes during unsubscribe', async function () {
+        const sub = Object.assign({}, new_sub, {
+            id: uuid(),
+            name: 'concurrent_unsubscribe_sub',
+            auto_create_playlist: true
+        });
+        const source_file = {
+            uid: uuid(),
+            sub_id: sub.id,
+            title: 'Subscription file',
+            thumbnailURL: 'https://example.com/source.jpg',
+            duration: 30,
+            registered: 100
+        };
+        const original_create_playlist = files_api.createPlaylist;
+        let release_create_playlist;
+        let signal_create_started;
+        const create_started = new Promise(resolve => { signal_create_started = resolve; });
+        const create_released = new Promise(resolve => { release_create_playlist = resolve; });
+
+        files_api.createPlaylist = async (...args) => {
+            signal_create_started();
+            await create_released;
+            return await original_create_playlist(...args);
+        };
+
+        try {
+            await db_api.insertRecordIntoTable('subscriptions', sub);
+            await db_api.insertRecordIntoTable('files', source_file);
+            const sync_promise = files_api.syncSubscriptionPlaylist(sub.id);
+            await create_started;
+
+            const unsubscribe_promise = subscriptions_api.unsubscribe(sub.id, true);
+            assert(await waitForCondition(async () => {
+                const stored_sub = await db_api.getRecord('subscriptions', {id: sub.id});
+                return stored_sub && stored_sub.auto_create_playlist === false;
+            }));
+            release_create_playlist();
+
+            await sync_promise;
+            const result = await unsubscribe_promise;
+            assert.strictEqual(result.success, true);
+            assert.strictEqual(await db_api.getRecord('playlists', {source_sub_id: sub.id}), undefined);
+        } finally {
+            files_api.createPlaylist = original_create_playlist;
+            release_create_playlist();
+        }
     });
     it('Delete subscription file', async function () {
         
@@ -554,6 +667,64 @@ describe('Subscriptions', function() {
         await subscriptions_api.updateSubscription(sub_update);
         const updated_sub = await db_api.getRecord('subscriptions', {id: new_sub['id']});
         assert(updated_sub['name'] === 'updated_name');
+    });
+    it('Backfills and appends to an automatic subscription playlist', async function () {
+        const sub = Object.assign({}, new_sub, {
+            id: uuid(),
+            name: 'automatic_playlist_sub',
+            auto_create_playlist: false
+        });
+        const first_file = {
+            uid: uuid(),
+            sub_id: sub.id,
+            title: 'First file',
+            thumbnailURL: 'https://example.com/first.jpg',
+            duration: 30,
+            registered: 100
+        };
+        const second_file = {
+            uid: uuid(),
+            sub_id: sub.id,
+            title: 'Second file',
+            thumbnailURL: 'https://example.com/second.jpg',
+            duration: 45,
+            registered: 200
+        };
+        const third_file = {
+            uid: uuid(),
+            sub_id: sub.id,
+            title: 'Third file',
+            thumbnailURL: 'https://example.com/third.jpg',
+            duration: 60,
+            registered: 300
+        };
+
+        await subscriptions_api.subscribe(sub, null, true);
+        await db_api.insertRecordIntoTable('files', second_file);
+        await db_api.insertRecordIntoTable('files', first_file);
+
+        const enabled_sub = Object.assign({}, sub, {auto_create_playlist: true});
+        assert.strictEqual(await subscriptions_api.updateSubscription(enabled_sub), true);
+
+        let playlists = await db_api.getRecords('playlists', {source_sub_id: sub.id});
+        assert.strictEqual(playlists.length, 1);
+        assert.strictEqual(playlists[0].name, sub.name);
+        assert.deepStrictEqual(playlists[0].uids, [first_file.uid, second_file.uid]);
+        assert.strictEqual(playlists[0].duration, 75);
+
+        await db_api.updateRecord('playlists', {id: playlists[0].id}, {
+            uids: [...playlists[0].uids, 'deleted-file']
+        });
+        await db_api.insertRecordIntoTable('files', third_file);
+        await Promise.all([
+            files_api.syncSubscriptionPlaylist(sub.id, null, third_file.uid),
+            files_api.syncSubscriptionPlaylist(sub.id, null, third_file.uid)
+        ]);
+
+        playlists = await db_api.getRecords('playlists', {source_sub_id: sub.id});
+        assert.strictEqual(playlists.length, 1);
+        assert.deepStrictEqual(playlists[0].uids, [first_file.uid, second_file.uid, third_file.uid]);
+        assert.strictEqual(playlists[0].duration, 135);
     });
     it('Update subscription property', async function () {
         await subscriptions_api.subscribe(new_sub, null, true);

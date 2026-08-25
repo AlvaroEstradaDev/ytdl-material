@@ -18,6 +18,7 @@ export type Subscription = {
     custom_args?: string;
     custom_output?: string;
     use_subfolder?: boolean;
+    auto_create_playlist?: boolean;
     downloading?: boolean;
     paused?: boolean;
     refresh_status?: SubscriptionRefreshStatus;

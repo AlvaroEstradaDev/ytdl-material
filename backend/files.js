@@ -17,6 +17,7 @@ const MEDIA_EXTENSIONS_BY_TYPE = {
 };
 const SIDECAR_SCAN_EXTENSIONS = ['json', 'webp', 'jpg', 'png', 'nfo', 'vtt'];
 const MANAGED_SIDECAR_EXTENSIONS = ['.webp', '.jpg', '.png', '.nfo'];
+const subscription_playlist_syncs = new Map();
 
 function shouldRestrictToUser(user_uid) {
     return config_api.getConfigItem('ytdl_multi_user_mode') && user_uid !== null && user_uid !== undefined;
@@ -1186,6 +1187,10 @@ exports.registerFileDB = async (file_path, type, user_uid = null, category = nul
 
     const file_obj = await registerFileDBManual(file_object);
 
+    if (sub_id && file_obj) {
+        await exports.syncSubscriptionPlaylist(sub_id, user_uid, file_obj.uid);
+    }
+
     // remove metadata JSON if needed
     if (!config_api.getConfigItem('ytdl_include_metadata')) {
         utils.deleteJSONFile(file_path, type)
@@ -1522,6 +1527,156 @@ exports.createPlaylist = async (playlist_name, uids, user_uid = null) => {
     await db_api.updateRecord('playlists', {id: new_playlist.id}, {duration: duration});
 
     return new_playlist;
+}
+
+async function syncSubscriptionPlaylist(sub_id, user_uid = null, file_uid = null) {
+    const subscription_filter = {id: sub_id};
+    if (shouldRestrictToUser(user_uid)) subscription_filter['user_uid'] = user_uid;
+    const subscription = await db_api.getRecord('subscriptions', subscription_filter);
+    if (!subscription || subscription['auto_create_playlist'] !== true || !subscription['name']) return null;
+
+    const playlist_filter = {source_sub_id: sub_id};
+    if (shouldRestrictToUser(user_uid)) playlist_filter['user_uid'] = user_uid;
+    let playlist = await db_api.getRecord('playlists', playlist_filter);
+
+    if (playlist && file_uid) {
+        const stored_uids = Array.isArray(playlist['uids']) ? playlist['uids'] : [];
+        const existing_files = await exports.getVideosByUIDs(stored_uids, user_uid);
+        const existing_uids = new Set(existing_files.map(file => file.uid));
+        playlist['uids'] = stored_uids.filter(uid => existing_uids.has(uid));
+        if (playlist['uids'].includes(file_uid) && playlist['uids'].length === stored_uids.length) return playlist;
+        if (playlist['uids'].includes(file_uid)) {
+            return await exports.updatePlaylist(playlist, user_uid) ? playlist : null;
+        }
+        playlist['uids'].push(file_uid);
+        return await exports.updatePlaylist(playlist, user_uid) ? playlist : null;
+    }
+
+    const files_filter = {sub_id: sub_id};
+    if (shouldRestrictToUser(user_uid)) files_filter['user_uid'] = user_uid;
+    const subscription_files = await db_api.getRecords('files', files_filter, false, {by: 'registered', order: 1});
+    if (subscription_files.length === 0) return playlist;
+
+    if (!playlist) {
+        playlist = await exports.createPlaylist(subscription['name'], subscription_files.map(file => file.uid), user_uid);
+        if (!playlist) return null;
+        playlist['source_sub_id'] = sub_id;
+        await db_api.updateRecord('playlists', {id: playlist.id}, {source_sub_id: sub_id});
+        return playlist;
+    }
+
+    const stored_uids = Array.isArray(playlist['uids']) ? playlist['uids'] : [];
+    const playlist_files = await exports.getVideosByUIDs(stored_uids, user_uid);
+    const valid_playlist_uids = new Set(playlist_files.map(file => file.uid));
+    const merged_uids = stored_uids.filter(uid => valid_playlist_uids.has(uid));
+    let playlist_changed = merged_uids.length !== stored_uids.length;
+    const existing_uids = new Set(merged_uids);
+    for (const file of subscription_files) {
+        if (!existing_uids.has(file.uid)) {
+            existing_uids.add(file.uid);
+            merged_uids.push(file.uid);
+            playlist_changed = true;
+        }
+    }
+    if (!playlist_changed) return playlist;
+
+    playlist['uids'] = merged_uids;
+    return await exports.updatePlaylist(playlist, user_uid) ? playlist : null;
+}
+
+async function queueSubscriptionPlaylistWork(sub_id, user_uid, work) {
+    const sync_key = `${user_uid || ''}:${sub_id}`;
+    const previous_sync = subscription_playlist_syncs.get(sync_key) || Promise.resolve();
+    const current_sync = previous_sync
+        .catch(() => null)
+        .then(work);
+    subscription_playlist_syncs.set(sync_key, current_sync);
+
+    try {
+        return await current_sync;
+    } finally {
+        if (subscription_playlist_syncs.get(sync_key) === current_sync) {
+            subscription_playlist_syncs.delete(sync_key);
+        }
+    }
+}
+
+async function cleanupSubscriptionPlaylists(sub_id, user_uid = null, source_file_uids = null) {
+    const playlist_filter = {source_sub_id: sub_id};
+    if (shouldRestrictToUser(user_uid)) playlist_filter['user_uid'] = user_uid;
+    const playlists = await db_api.getRecords('playlists', playlist_filter);
+    if (playlists.length === 0) return true;
+
+    if (!Array.isArray(source_file_uids)) {
+        const files_filter = {sub_id: sub_id};
+        if (shouldRestrictToUser(user_uid)) files_filter['user_uid'] = user_uid;
+        source_file_uids = (await db_api.getRecords('files', files_filter)).map(file => file.uid);
+    }
+    const source_uid_set = new Set(source_file_uids);
+    let success = true;
+
+    for (const playlist of playlists) {
+        const stored_uids = Array.isArray(playlist['uids']) ? playlist['uids'] : [];
+        const remaining_candidates = stored_uids.filter(uid => !source_uid_set.has(uid));
+        const remaining_files = await exports.getVideosByUIDs(remaining_candidates, user_uid);
+        const remaining_uid_set = new Set(remaining_files.map(file => file.uid));
+        const remaining_uids = remaining_candidates.filter(uid => remaining_uid_set.has(uid));
+        const stored_playlist_filter = {id: playlist.id};
+        if (shouldRestrictToUser(user_uid)) stored_playlist_filter['user_uid'] = user_uid;
+
+        if (remaining_uids.length === 0) {
+            success = await db_api.removeRecord('playlists', stored_playlist_filter) && success;
+            continue;
+        }
+
+        playlist['uids'] = remaining_uids;
+        if (!(await exports.updatePlaylist(playlist, user_uid))) {
+            success = false;
+            continue;
+        }
+
+        const thumbnail_url = remaining_files[0] && remaining_files[0]['thumbnailURL'];
+        if (thumbnail_url !== undefined) {
+            success = await db_api.updateRecord('playlists', stored_playlist_filter, {thumbnailURL: thumbnail_url}) && success;
+        }
+        success = await db_api.removePropertyFromRecord('playlists', stored_playlist_filter, {source_sub_id: true}) && success;
+    }
+
+    return success;
+}
+
+exports.syncSubscriptionPlaylist = async (sub_id, user_uid = null, file_uid = null) => {
+    if (!sub_id) return null;
+
+    // Downloads for one subscription can finish concurrently. Serialize only this
+    // subscription's updates so two completions cannot create duplicate playlists or
+    // overwrite each other's appended uid. Teardown uses the same queue so an in-flight
+    // completion cannot recreate a playlist after unsubscribe cleanup.
+    try {
+        return await queueSubscriptionPlaylistWork(
+            sub_id,
+            user_uid,
+            () => syncSubscriptionPlaylist(sub_id, user_uid, file_uid)
+        );
+    } catch (err) {
+        logger.error(`Failed to sync the automatic playlist for subscription ${sub_id}: ${err.message}`);
+        return null;
+    }
+}
+
+exports.cleanupSubscriptionPlaylists = async (sub_id, user_uid = null, source_file_uids = null) => {
+    if (!sub_id) return true;
+
+    try {
+        return await queueSubscriptionPlaylistWork(
+            sub_id,
+            user_uid,
+            () => cleanupSubscriptionPlaylists(sub_id, user_uid, source_file_uids)
+        );
+    } catch (err) {
+        logger.error(`Failed to clean up automatic playlists for subscription ${sub_id}: ${err.message}`);
+        return false;
+    }
 }
 
 exports.getPlaylist = async (playlist_id, user_uid = null, require_sharing = false) => {

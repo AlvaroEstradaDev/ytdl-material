@@ -20,7 +20,7 @@ export class CreatePlaylistComponent implements OnInit {
   audiosToSelectFrom = null;
   videosToSelectFrom = null;
   name = '';
-  cached_thumbnail_url = null;
+  cached_thumbnail_url: string | null = null;
 
   create_in_progress = false;
   create_mode = false;
@@ -82,7 +82,7 @@ export class CreatePlaylistComponent implements OnInit {
     return this.cached_thumbnail_url;
   }
 
-  fileSelectionChanged({new_selection, thumbnailURL}: {new_selection: string[], thumbnailURL: string}): void {
+  fileSelectionChanged({new_selection, thumbnailURL}: {new_selection: string[], thumbnailURL: string | null}): void {
     this.filesSelect.setValue(new_selection);
     if (new_selection.length) this.cached_thumbnail_url = thumbnailURL;
     else                      this.cached_thumbnail_url = null;
