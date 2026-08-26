@@ -3,8 +3,10 @@ import { PostsService } from 'app/posts.services';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatDialog } from '@angular/material/dialog';
 import { EditSubscriptionDialogComponent } from 'app/dialogs/edit-subscription-dialog/edit-subscription-dialog.component';
+import { ConfirmDialogComponent } from 'app/dialogs/confirm-dialog/confirm-dialog.component';
 import { Subscription, SubscriptionRefreshStatus } from 'api-types';
 import { saveAs } from 'file-saver';
+import { Subscription as RxSubscription } from 'rxjs';
 import { filter, finalize, take } from 'rxjs/operators';
 
 @Component({
@@ -23,6 +25,7 @@ export class SubscriptionComponent implements OnInit, OnDestroy {
   use_youtubedl_archive = false;
   descendingMode = true;
   downloading = false;
+  archiveDownloadSubscription: RxSubscription | null = null;
   sub_interval = null;
   check_clicked = false;
   cancel_clicked = false;
@@ -54,6 +57,9 @@ export class SubscriptionComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.archiveDownloadSubscription?.unsubscribe();
+    this.archiveDownloadSubscription = null;
+
     // prevents subscription getter from running in the background
     if (this.sub_interval) {
       clearInterval(this.sub_interval);
@@ -122,15 +128,44 @@ export class SubscriptionComponent implements OnInit, OnDestroy {
   }
 
   downloadContent(): void {
-    this.downloading = true;
-    this.postsService.downloadSubFromServer(this.subscription.id).subscribe(res => {
-      this.downloading = false;
-      const blob: Blob = res;
-      saveAs(blob, this.subscription.name + '.zip');
-    }, err => {
-      console.log(err);
-      this.downloading = false;
+    if (this.downloading) return;
+
+    const file_count = this.getSubscriptionFileCount(this.subscription);
+    const dialogRef = this.dialog.open(ConfirmDialogComponent, {
+      data: {
+        dialogTitle: $localize`Download subscription?`,
+        dialogText: $localize`Download all ${file_count}:subscription file count: files from ${this.subscription.name}:subscription name: as a zip? Creating the archive can take a while and use significant disk space.`,
+        submitText: $localize`Download`
+      }
     });
+
+    dialogRef.afterClosed().pipe(take(1)).subscribe(confirmed => {
+      if (confirmed) this.startSubscriptionDownload();
+    });
+  }
+
+  startSubscriptionDownload(): void {
+    const zip_name = this.subscription.name;
+    this.downloading = true;
+    this.archiveDownloadSubscription = this.postsService.downloadSubFromServer(this.subscription.id).subscribe(res => {
+      this.downloading = false;
+      this.archiveDownloadSubscription = null;
+      const blob: Blob = res;
+      saveAs(blob, zip_name + '.zip');
+    }, err => {
+      console.error(err);
+      this.downloading = false;
+      this.archiveDownloadSubscription = null;
+    });
+  }
+
+  cancelSubscriptionDownload(): void {
+    if (!this.downloading) return;
+
+    this.archiveDownloadSubscription?.unsubscribe();
+    this.archiveDownloadSubscription = null;
+    this.downloading = false;
+    this.postsService.openSnackBar($localize`Subscription download cancelled.`);
   }
 
   editSubscription(): void {
