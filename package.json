@@ -12,7 +12,6 @@
     "test": "ng test --browsers Chromium",
     "test:headless": "ng test --watch=false",
     "lint": "eslint --ext .ts,.js src",
-    "electron": "ng build --base-href ./ && electron .",
     "generate": "openapi --input ./\"Public API v1.yaml\" --output ./src/api-types --exportCore false --exportServices false --exportModels true",
     "i18n-source": "ng extract-i18n --output-path=src/assets/i18n --out-file=messages.en.xlf"
   },
