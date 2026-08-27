@@ -68,6 +68,8 @@ export class EditSubscriptionDialogComponent implements OnInit {
     this.new_sub = JSON.parse(JSON.stringify(this.sub));
     this.sub.use_subfolder = this.sub.use_subfolder !== false;
     this.new_sub.use_subfolder = this.new_sub.use_subfolder !== false;
+    this.sub.auto_create_playlist = this.sub.auto_create_playlist === true;
+    this.new_sub.auto_create_playlist = this.new_sub.auto_create_playlist === true;
 
     // ignore videos to keep requests small
     delete this.sub['videos'];

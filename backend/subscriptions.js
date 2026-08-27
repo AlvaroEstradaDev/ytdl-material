@@ -1149,7 +1149,14 @@ exports.unsubscribe = async (sub_id, deleteMode, user_uid = null) => {
         }
     }
 
+    const remove_sub_filter = {id: id};
+    if (shouldRestrictToUser(user_uid)) remove_sub_filter['user_uid'] = user_uid;
+    // Stop any registration callback that arrives after teardown begins from creating a
+    // new managed playlist. Cleanup is also serialized behind callbacks already in flight.
+    await db_api.updateRecord('subscriptions', remove_sub_filter, {auto_create_playlist: false});
+
     await killSubDownloads(sub_id, true);
+    await files_api.cleanupSubscriptionPlaylists(id, user_uid, sub_files.map(file => file.uid));
 
     if (deleteMode && !utils.usesSubscriptionSubfolder(sub)) {
         for (const sub_file of sub_files) {
@@ -1157,8 +1164,6 @@ exports.unsubscribe = async (sub_id, deleteMode, user_uid = null) => {
         }
     }
 
-    const remove_sub_filter = {id: id};
-    if (shouldRestrictToUser(user_uid)) remove_sub_filter['user_uid'] = user_uid;
     await db_api.removeRecord('subscriptions', remove_sub_filter);
     await db_api.removeAllRecords('files', {sub_id: id, ...(shouldRestrictToUser(user_uid) ? {user_uid: user_uid} : {})});
 
@@ -2173,6 +2178,9 @@ exports.updateSubscription = async (sub, user_uid = null) => {
 
     const updated = await db_api.updateRecord('subscriptions', filter_obj, sub);
     if (!updated) return false;
+    if (sub['auto_create_playlist'] === true) {
+        await files_api.syncSubscriptionPlaylist(sub.id, user_uid);
+    }
     exports.writeSubscriptionMetadata(sub);
     await cleanupSubscriptionPathChange(current_sub, sub, user_uid);
     return true;

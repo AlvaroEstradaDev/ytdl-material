@@ -2362,6 +2362,8 @@ components:
           type: string
         useSubfolder:
           type: boolean
+        autoCreatePlaylist:
+          type: boolean
         maxQuality:
           type: string
     SubscribeResponse:
@@ -3087,6 +3089,9 @@ components:
           type: boolean
         sharingEnabled:
           type: boolean
+        source_sub_id:
+          type: string
+          description: Subscription whose downloads are automatically appended to this playlist
     Download:
       required:
         - url
@@ -3292,6 +3297,8 @@ components:
         custom_output:
           type: string
         use_subfolder:
+          type: boolean
+        auto_create_playlist:
           type: boolean
         downloading:
           type: boolean

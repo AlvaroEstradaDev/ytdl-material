@@ -10,6 +10,7 @@ export type SubscribeRequest = {
     customArgs?: string;
     customFileOutput?: string;
     useSubfolder?: boolean;
+    autoCreatePlaylist?: boolean;
     maxQuality?: string;
     audioFormat?: string;
 };

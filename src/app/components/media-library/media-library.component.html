@@ -231,6 +231,21 @@
         }
       </mat-tab>
       <mat-tab label="Select files" i18n-label="Select files">
+        <div class="d-flex align-items-center flex-wrap mt-2 mb-3" style="gap: 12px;">
+          @if (selection_sources_received && selection_sources.length > 0) {
+            <mat-form-field appearance="outline">
+              <mat-label i18n="Playlist source filter label">Download source</mat-label>
+              <mat-select [value]="sub_id" (selectionChange)="selectionSourceChanged($event.value)">
+                <mat-option [value]="null" i18n="All download sources option">All files</mat-option>
+                @for (subscription of selection_sources; track subscription.id) {
+                  <mat-option [value]="subscription.id">{{subscription.name}}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+          }
+          <button mat-stroked-button type="button" (click)="selectAllAvailableFiles()" [disabled]="!paged_data?.length || allAvailableFilesSelected()" i18n="Select all playlist files button">Select all files</button>
+          <button mat-stroked-button type="button" (click)="clearFileSelection()" [disabled]="selected_data.length === 0" i18n="Clear playlist selection button">Clear selection</button>
+        </div>
         @if (normal_files_received) {
           <mat-selection-list (selectionChange)="fileSelectionChanged($event)">
             @for (file of paged_data; track file.uid) {

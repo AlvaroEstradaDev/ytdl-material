@@ -104,3 +104,32 @@ substituted tarball fails the build.
 so CI and anyone who has not started the server are unaffected. Point it elsewhere — a real
 directory, or a second instance — with the `YTDL_TEST_LDAP_*` variables that
 `dev/ldap/ldap-server.sh env` prints.
+
+# Checking dependency declarations
+
+`package.json` is a shopping list, not a record of what the code uses, and nothing ever
+checks the list back against the code. A module can therefore be required successfully for
+months while being declared nowhere — it arrives hoisted in as somebody else's transitive
+dependency, and keeps working right up until that somebody drops or bumps it. The failure
+then surfaces in a release that touched something unrelated. `@discordjs/rest` sat like
+that in `backend/notifications.js`, supplied only by `@discordjs/core`.
+
+```bash
+node dev/deps/check-declared.mjs            # both trees
+node dev/deps/check-declared.mjs backend    # one of them
+```
+
+It resolves every bare import specifier back to a package name and exits non-zero on any
+that `package.json` does not declare, naming the files that import it. Worth a run when
+dependencies change, or when a package starts arriving from somewhere new.
+
+It is not part of CI: it reads an installed `node_modules`, so its answer depends on
+install state, and the case it catches is rare enough that an occasional manual run is the
+better trade.
+
+There is deliberately no check for the opposite case — declared but unused. That cannot be
+told apart from legitimate use without a lot of special-casing (`@angular/compiler` is
+needed by the build without any file naming it, `openapi-typescript-codegen` is invoked as
+the `openapi` binary, `@types/*` are ambient), and a version that tried flagged eleven
+frontend packages of which most were load-bearing. Finding genuinely dead dependencies is
+`git log -S "require('name')"` work, done by hand.

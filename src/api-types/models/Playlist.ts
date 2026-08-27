@@ -27,4 +27,8 @@ export type Playlist = {
     user_uid?: string;
     auto?: boolean;
     sharingEnabled?: boolean;
+    /**
+     * Subscription whose downloads are automatically appended to this playlist
+     */
+    source_sub_id?: string;
 };

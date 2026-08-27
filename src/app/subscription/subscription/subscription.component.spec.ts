@@ -6,6 +6,7 @@ describe('SubscriptionComponent', () => {
   let component: SubscriptionComponent;
   let postsService: any;
   let router: any;
+  let dialog: any;
 
   beforeEach(() => {
     postsService = {
@@ -33,9 +34,66 @@ describe('SubscriptionComponent', () => {
     router = {
       navigate: vi.fn().mockName('navigate')
     };
+    dialog = {
+      open: vi.fn().mockName('open')
+    };
 
-    component = new SubscriptionComponent(postsService, { params: of({ id: 'sub-1' }) } as any, router, { open: vi.fn().mockName('open') } as any);
+    component = new SubscriptionComponent(postsService, { params: of({ id: 'sub-1' }) } as any, router, dialog);
     component.id = 'sub-1';
+  });
+
+  it('should confirm before preparing a subscription archive', () => {
+    component.subscription = {
+      id: 'sub-1',
+      name: 'Test subscription',
+      file_count: 125
+    } as any;
+    dialog.open.mockReturnValue({afterClosed: () => of(false)});
+
+    component.downloadContent();
+
+    expect(dialog.open).toHaveBeenCalledWith(expect.any(Function), {
+      data: {
+        dialogTitle: 'Download subscription?',
+        dialogText: expect.stringContaining('125 files from Test subscription'),
+        submitText: 'Download'
+      }
+    });
+    expect(postsService.downloadSubFromServer).not.toHaveBeenCalled();
+  });
+
+  it('should start preparing the archive after confirmation', () => {
+    component.subscription = {
+      id: 'sub-1',
+      name: 'Test subscription',
+      file_count: 2
+    } as any;
+    dialog.open.mockReturnValue({afterClosed: () => of(true)});
+    postsService.downloadSubFromServer.mockReturnValue(new Subject<Blob>());
+
+    component.downloadContent();
+
+    expect(postsService.downloadSubFromServer).toHaveBeenCalledWith('sub-1');
+    expect(component.downloading).toBe(true);
+  });
+
+  it('should cancel an in-progress subscription archive request', () => {
+    const archive_response = new Subject<Blob>();
+    component.subscription = {
+      id: 'sub-1',
+      name: 'Test subscription',
+      file_count: 2
+    } as any;
+    postsService.downloadSubFromServer.mockReturnValue(archive_response);
+    component.startSubscriptionDownload();
+    const unsubscribe_spy = vi.spyOn(component.archiveDownloadSubscription, 'unsubscribe');
+
+    component.cancelSubscriptionDownload();
+
+    expect(unsubscribe_spy).toHaveBeenCalled();
+    expect(component.archiveDownloadSubscription).toBeNull();
+    expect(component.downloading).toBe(false);
+    expect(postsService.openSnackBar).toHaveBeenCalledWith('Subscription download cancelled.');
   });
 
   it('should preserve the existing videos array during low-cost refresh polling', () => {

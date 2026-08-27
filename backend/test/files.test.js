@@ -125,6 +125,45 @@ describe('Files', function() {
         }
     });
 
+    it('registerFileDB appends subscription downloads to their automatic playlist', async function() {
+        const original_sync_subscription_playlist = files_api.syncSubscriptionPlaylist;
+        const original_include_metadata = config_api.getConfigItem('ytdl_include_metadata');
+        let sync_args = null;
+
+        files_api.syncSubscriptionPlaylist = async (...args) => {
+            sync_args = args;
+            return true;
+        };
+
+        try {
+            config_api.setConfigItem('ytdl_include_metadata', true);
+            await fs.writeFile(fixture_file_path, 'fixture');
+            const output = await files_api.registerFileDB(
+                fixture_file_path,
+                'video',
+                null,
+                null,
+                'subscription-1',
+                null,
+                {
+                    path: fixture_file_path,
+                    title: 'Subscription file',
+                    thumbnailURL: 'https://example.com/thumb.jpg',
+                    duration: 30,
+                    isAudio: false,
+                    source_metadata_checked: true
+                }
+            );
+
+            assert(output);
+            assert.deepStrictEqual(sync_args, ['subscription-1', null, output.uid]);
+        } finally {
+            files_api.syncSubscriptionPlaylist = original_sync_subscription_playlist;
+            config_api.setConfigItem('ytdl_include_metadata', original_include_metadata);
+            await db_api.removeAllRecords('files', {path: fixture_file_path});
+        }
+    });
+
     it('attachFileChaptersCollection returns empty chapters when metadata is missing', function() {
         const output = files_api.attachFileChaptersCollection([{
             path: path.join(fixture_dir, 'missing-video.mp4'),

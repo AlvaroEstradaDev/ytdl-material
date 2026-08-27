@@ -163,7 +163,7 @@ exports.getDownloadedFilesByType = async (basePath, type, full_metadata = false)
  * it goes in the Content-Disposition header, which
  * is what a filename is actually for.
  ************************************************/
-exports.createContainerZipFile = async (file_name, container_file_objs, user_uid = null) => {
+exports.createContainerZipFile = async (file_name, container_file_objs, user_uid = null, options = {}) => {
     const container_files_to_download = [];
     for (const container_file_obj of container_file_objs) {
         // Every path here came out of a database record. Records written before the path
@@ -177,10 +177,13 @@ exports.createContainerZipFile = async (file_name, container_file_objs, user_uid
     }
 
     const zip_file_path = path.join('appdata', `container-${uuid()}.zip`);
-    return await exports.createZipFile(zip_file_path, container_files_to_download);
+    return await exports.createZipFile(zip_file_path, container_files_to_download, options);
 }
 
-exports.createZipFile = async (zip_file_path, file_paths) => {
+exports.createZipFile = async (zip_file_path, file_paths, options = {}) => {
+    const signal = options.signal;
+    if (signal?.aborted) return null;
+
     const output = fs.createWriteStream(zip_file_path);
 
     // archiver 8 replaced the callable factory with exported classes, so archiver('zip')
@@ -189,6 +192,15 @@ exports.createZipFile = async (zip_file_path, file_paths) => {
     const archive = new ZipArchive({
         zlib: { level: 9 } // Sets the compression level.
     });
+    let aborted = false;
+    const abortArchive = () => {
+        aborted = true;
+        // Archiver lets its one active worker finish, then drops the rest of the
+        // queue and closes the output. Keeping the output writable until that close
+        // avoids stranding the active worker behind backpressure.
+        archive.abort();
+    };
+    signal?.addEventListener('abort', abortArchive, {once: true});
 
     // Both ends need a handler. An unhandled 'error' on either stream is an uncaught
     // exception, which takes the process down rather than failing the one request --
@@ -209,12 +221,15 @@ exports.createZipFile = async (zip_file_path, file_paths) => {
     }
 
     try {
-        archive.finalize();
+        archive.finalize().catch(() => null);
         await archive_finished;
+        if (aborted) throw new Error('Archive creation cancelled');
     } catch (err) {
-        logger.error(`Failed to build ${zip_file_path}: ${err.message}`);
+        if (!aborted) logger.error(`Failed to build ${zip_file_path}: ${err.message}`);
         await fs.remove(zip_file_path).catch(() => null);
         return null;
+    } finally {
+        signal?.removeEventListener('abort', abortArchive);
     }
 
     return zip_file_path;

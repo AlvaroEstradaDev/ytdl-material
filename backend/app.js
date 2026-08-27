@@ -1941,6 +1941,7 @@ app.post('/api/subscribe', optionalJwt, requirePermission('subscriptions'), asyn
     let customOutput = req.body.customFileOutput;
     let useSubfolder = req.body.useSubfolder;
     let audioFormat = req.body.audioFormat;
+    let autoCreatePlaylist = req.body.autoCreatePlaylist;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
     const new_sub = {
                         name: name,
@@ -1949,7 +1950,8 @@ app.post('/api/subscribe', optionalJwt, requirePermission('subscriptions'), asyn
                         id: uuid(),
                         user_uid: user_uid,
                         type: audioOnly ? 'audio' : 'video',
-                        use_subfolder: useSubfolder !== false
+                        use_subfolder: useSubfolder !== false,
+                        auto_create_playlist: autoCreatePlaylist === true
                     };
 
     // adds timerange if it exists, otherwise all videos will be downloaded
@@ -2438,6 +2440,22 @@ app.post('/api/downloadFileFromServer', optionalJwt, requireAuthenticatedOrShare
     // named by the server -- so it is carried separately and used for the header.
     let download_display_name = null;
 
+    // Container archives are prepared before Express starts sending the response. Tie
+    // that work to the connection so cancelling the browser request stops archiver and
+    // removes its partial file instead of filling appdata in the background.
+    const createContainerArchive = async (name, file_objs, user_uid) => {
+        const controller = new AbortController();
+        const abortArchive = () => controller.abort();
+        req.once('aborted', abortArchive);
+        res.once('close', abortArchive);
+        try {
+            return await utils.createContainerZipFile(name, file_objs, user_uid, {signal: controller.signal});
+        } finally {
+            req.removeListener('aborted', abortArchive);
+            res.removeListener('close', abortArchive);
+        }
+    };
+
     if (req.user && req.user.uid) uuid = req.user.uid;
 
     let zip_file_generated = false;
@@ -2457,7 +2475,7 @@ app.post('/api/downloadFileFromServer', optionalJwt, requireAuthenticatedOrShare
 
         // generate zip
         download_display_name = playlist['name'];
-        file_path_to_download = await utils.createContainerZipFile(playlist['name'], playlist_files_to_download, uuid);
+        file_path_to_download = await createContainerArchive(playlist['name'], playlist_files_to_download, uuid);
     } else if (sub_id && !uid) {
         zip_file_generated = true;
         const sub = await subscriptions_api.getSubscription(sub_id, req.isAuthenticated() ? req.user.uid : null);
@@ -2469,7 +2487,7 @@ app.post('/api/downloadFileFromServer', optionalJwt, requireAuthenticatedOrShare
 
         // generate zip
         download_display_name = sub['name'];
-        file_path_to_download = await utils.createContainerZipFile(sub['name'], sub_files_to_download,
+        file_path_to_download = await createContainerArchive(sub['name'], sub_files_to_download,
             req.isAuthenticated() ? req.user.uid : null);
     } else {
         const file_obj = await files_api.getVideo(uid, uuid, sub_id)
@@ -2488,6 +2506,7 @@ app.post('/api/downloadFileFromServer', optionalJwt, requireAuthenticatedOrShare
         }
     }
     if (!file_path_to_download) {
+        if (req.aborted || res.destroyed) return;
         // The archive could not be built -- every record was refused, or the write failed.
         logger.error('Failed to build an archive to send.');
         res.sendStatus(500);

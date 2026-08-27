@@ -69,10 +69,12 @@ const tables = {
         primary_key: 'id',
         field_types: {
             id: 'text',
-            user_uid: 'text'
+            user_uid: 'text',
+            source_sub_id: 'text'
         },
         indexes: [
-            { keys: { user_uid: 1 } }
+            { keys: { user_uid: 1 } },
+            { keys: { user_uid: 1, source_sub_id: 1 } }
         ]
     },
     categories: {
@@ -92,6 +94,7 @@ const tables = {
             streamingOnly: 'boolean',
             isPlaylist: 'boolean',
             use_subfolder: 'boolean',
+            auto_create_playlist: 'boolean',
             name: 'text',
             url: 'text'
         },

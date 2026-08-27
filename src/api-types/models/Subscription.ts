@@ -20,6 +20,7 @@ export type Subscription = {
     custom_output?: string;
     audio_format?: string;
     use_subfolder?: boolean;
+    auto_create_playlist?: boolean;
     downloading?: boolean;
     paused?: boolean;
     refresh_status?: SubscriptionRefreshStatus;
