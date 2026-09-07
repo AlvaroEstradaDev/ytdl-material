@@ -6,8 +6,8 @@
 // The 'not-public' stage carves downloads that failed with a not-public error
 // (NOT_PUBLIC_ERROR_TYPES) out of 'errored'.
 // The contract test in downloads-filters.contract.test.js pins both sides
-// to the same truth (added in Task 4).
-const NOT_PUBLIC_ERROR_TYPES = ['not_public', 'join_only'];
+// to the same truth.
+const NOT_PUBLIC_ERROR_TYPES = Object.freeze(['not_public', 'join_only']);
 
 const STAGE_QUERIES = Object.freeze({
     cancelled:             { cancelled: true },
