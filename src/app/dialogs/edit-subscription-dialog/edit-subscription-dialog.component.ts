@@ -70,6 +70,9 @@ export class EditSubscriptionDialogComponent implements OnInit {
     this.new_sub.use_subfolder = this.new_sub.use_subfolder !== false;
     this.sub.auto_create_playlist = this.sub.auto_create_playlist === true;
     this.new_sub.auto_create_playlist = this.new_sub.auto_create_playlist === true;
+    // Normalize an explicit null so it compares the same as an absent timerange.
+    this.sub.timerange = this.sub.timerange || undefined;
+    this.new_sub.timerange = this.new_sub.timerange || undefined;
 
     // ignore videos to keep requests small
     delete this.sub['videos'];
@@ -101,19 +104,14 @@ export class EditSubscriptionDialogComponent implements OnInit {
 
   downloadAllToggled() {
     if (this.download_all) {
-      this.new_sub.timerange = null;
+      delete this.new_sub.timerange;
     } else {
-      console.log('checking');
       this.timerangeChanged(null, null);
     }
   }
 
   saveSubscription() {
-    if (this.audioFormat) {
-      this.new_sub.audio_format = this.audioFormat;
-    } else {
-      delete this.new_sub.audio_format;
-    }
+    this.audioFormatChanged();
     this.postsService.updateSubscription(this.new_sub).subscribe(res => {
       this.sub = this.new_sub;
       this.new_sub = JSON.parse(JSON.stringify(this.sub));
@@ -140,7 +138,7 @@ export class EditSubscriptionDialogComponent implements OnInit {
     if (this.timerange_amount && this.timerange_unit && !this.download_all) {
       this.new_sub.timerange = 'now-' + this.timerange_amount.toString() + this.timerange_unit;
     } else {
-      this.new_sub.timerange = null;
+      delete this.new_sub.timerange;
     }
   }
 
@@ -148,14 +146,21 @@ export class EditSubscriptionDialogComponent implements OnInit {
     this.saveSubscription();
   }
 
+  // The audio format dropdown binds to this.audioFormat rather than new_sub directly,
+  // so it has to be mirrored into new_sub for subChanged() to detect the change.
+  audioFormatChanged() {
+    if (this.audioFormat) {
+      this.new_sub.audio_format = this.audioFormat;
+    } else {
+      delete this.new_sub.audio_format;
+    }
+  }
+
   // modify custom args
   openArgsModifierDialog() {
-    if (!this.new_sub.custom_args) {
-      this.new_sub.custom_args = '';
-    }
     const dialogRef = this.dialog.open(ArgModifierDialogComponent, {
       data: {
-       initial_args: this.new_sub.custom_args
+       initial_args: this.new_sub.custom_args || ''
       }
     });
     dialogRef.afterClosed().subscribe(new_args => {

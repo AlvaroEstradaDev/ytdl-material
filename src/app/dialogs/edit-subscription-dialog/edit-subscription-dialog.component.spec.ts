@@ -23,4 +23,34 @@ describe('EditSubscriptionDialogComponent', () => {
   it('should create', () => {
     expect(component).toBeTruthy();
   });
+
+  it('tracks audio format changes for save detection', () => {
+    expect(component.subChanged()).toBe(false);
+
+    component.audioFormat = 'flac';
+    component.audioFormatChanged();
+    expect(component.new_sub.audio_format).toBe('flac');
+    expect(component.subChanged()).toBe(true);
+
+    component.audioFormat = null;
+    component.audioFormatChanged();
+    expect('audio_format' in component.new_sub).toBe(false);
+    expect(component.subChanged()).toBe(false);
+  });
+
+  it('treats a download-all round trip as unchanged', () => {
+    expect(component.subChanged()).toBe(false);
+
+    component.download_all = false;
+    component.timerange_amount = 2;
+    component.timerange_unit = 'days';
+    component.timerangeChanged(null, false);
+    expect(component.new_sub.timerange).toBe('now-2days');
+    expect(component.subChanged()).toBe(true);
+
+    component.download_all = true;
+    component.downloadAllToggled();
+    expect('timerange' in component.new_sub).toBe(false);
+    expect(component.subChanged()).toBe(false);
+  });
 });
