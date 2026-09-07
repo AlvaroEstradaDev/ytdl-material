@@ -2,14 +2,19 @@
 
 // Each STAGE_QUERIES entry is a Mongo predicate over raw download fields.
 // Keep in sync with DownloadsComponent.deriveStage() in
-// src/app/components/downloads/downloads.component.ts (lines ~804-812).
+// src/app/components/downloads/downloads.component.ts (lines ~791-799).
+// The 'not-public' stage carves downloads that failed with a not-public error
+// (NOT_PUBLIC_ERROR_TYPES) out of 'errored'.
 // The contract test in downloads-filters.contract.test.js pins both sides
 // to the same truth (added in Task 4).
+const NOT_PUBLIC_ERROR_TYPES = ['not_public', 'join_only'];
+
 const STAGE_QUERIES = Object.freeze({
     cancelled:             { cancelled: true },
     paused:                { paused: true,  cancelled: { $ne: true } },
-    errored:               { finished: true,  error: { $nin: [null, ''] }, cancelled: { $ne: true }, paused: { $ne: true } },
-    complete:              { finished: true,  error: { $in: [null, ''] },  cancelled: { $ne: true }, paused: { $ne: true } },
+    'not-public':          { finished: true, error: { $nin: [null, ''] }, error_type: { $in: NOT_PUBLIC_ERROR_TYPES }, cancelled: { $ne: true }, paused: { $ne: true } },
+    errored:               { finished: true, error: { $nin: [null, ''] }, error_type: { $nin: NOT_PUBLIC_ERROR_TYPES }, cancelled: { $ne: true }, paused: { $ne: true } },
+    complete:              { finished: true, error: { $in: [null, ''] },  cancelled: { $ne: true }, paused: { $ne: true } },
     'active-creating':     { finished: false, cancelled: { $ne: true }, paused: { $ne: true }, step_index: 0 },
     'active-getting-info': { finished: false, cancelled: { $ne: true }, paused: { $ne: true }, step_index: 1 },
     'active-downloading':  { finished: false, cancelled: { $ne: true }, paused: { $ne: true }, step_index: { $not: { $in: [0, 1] } } },
@@ -83,6 +88,7 @@ function buildDownloadQuery(baseQuery, filters) {
 
 module.exports = {
     STAGE_QUERIES,
+    NOT_PUBLIC_ERROR_TYPES,
     buildTitleFilter,
     buildStageFilter,
     buildDateFilter,

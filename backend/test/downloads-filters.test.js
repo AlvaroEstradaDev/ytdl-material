@@ -67,6 +67,25 @@ describe('downloads-filters', function() {
                 'error:"" MUST match complete');
         });
 
+        it('not-public matches only not_public/join_only error types; errored excludes them', function() {
+            const notPublicDoc = { finished: true, error: 'x', error_type: 'not_public' };
+            const genericErrDoc = { finished: true, error: 'x', error_type: null };
+            assert.ok(matchesPredicate(notPublicDoc, STAGE_QUERIES['not-public']),
+                'error_type "not_public" must match the not-public stage');
+            assert.ok(!matchesPredicate(notPublicDoc, STAGE_QUERIES.errored),
+                'error_type "not_public" must NOT match errored');
+            assert.ok(matchesPredicate(genericErrDoc, STAGE_QUERIES.errored),
+                'error_type null must match errored');
+            assert.ok(!matchesPredicate(genericErrDoc, STAGE_QUERIES['not-public']),
+                'error_type null must NOT match not-public');
+
+            const notPublicFilter = buildStageFilter(['not-public']);
+            assert.ok(matchesPredicate(notPublicDoc, notPublicFilter.$or[0]),
+                'buildStageFilter(["not-public"]) must match not_public downloads');
+            assert.ok(!matchesPredicate(genericErrDoc, notPublicFilter.$or[0]),
+                'buildStageFilter(["not-public"]) must NOT match generic errored downloads');
+        });
+
         it('returns cloned predicates (no shared refs with STAGE_QUERIES)', function() {
             const result = buildStageFilter(['errored']);
             assert.notStrictEqual(result.$or[0], STAGE_QUERIES.errored,

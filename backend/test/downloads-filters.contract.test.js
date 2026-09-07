@@ -4,12 +4,14 @@ const { STAGE_QUERIES } = require('../utils/downloads-filters');
 const { matchesPredicate } = require('./helpers/mongo-predicate');
 
 // Mirrors DownloadsComponent.deriveStage() exactly.
-// Source of truth: src/app/components/downloads/downloads.component.ts:804-812.
+// Source of truth: src/app/components/downloads/downloads.component.ts:791-799.
 // If the client function changes, UPDATE BOTH this mirror and STAGE_QUERIES, then re-run.
 function deriveStage(download) {
     if (download.cancelled) return 'cancelled';
     if (download.paused) return 'paused';
-    if (download.finished && download.error) return 'errored';
+    if (download.finished && download.error) {
+        return (download.error_type === 'not_public' || download.error_type === 'join_only') ? 'not-public' : 'errored';
+    }
     if (download.finished) return 'complete';
     if (download.step_index === 0) return 'active-creating';
     if (download.step_index === 1) return 'active-getting-info';
@@ -25,6 +27,9 @@ describe('progressStages drift contract', function() {
         { name: 'paused+cancelled→cancelled',      doc: { paused: true, cancelled: true } },
         { name: 'errored (error truthy)',          doc: { finished: true, error: 'boom' } },
         { name: 'errored (error empty string)→complete', doc: { finished: true, error: '' } },
+        { name: 'not-public (not_public type)',    doc: { finished: true, error: 'Private video', error_type: 'not_public' } },
+        { name: 'not-public (legacy join_only)',   doc: { finished: true, error: 'Join this channel', error_type: 'join_only' } },
+        { name: 'errored (generic type)',          doc: { finished: true, error: 'boom', error_type: 'unknown_error' } },
         { name: 'complete (error null)',           doc: { finished: true, error: null } },
         { name: 'complete (error missing)',        doc: { finished: true } },
         { name: 'active-creating (step 0)',        doc: { finished: false, step_index: 0 } },
