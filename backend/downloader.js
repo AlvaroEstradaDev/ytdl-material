@@ -76,6 +76,16 @@ const TRANSIENT_SUBSCRIPTION_DOWNLOAD_ERROR_TEXT = [
     'premieres in',
     'this live event will begin'
 ];
+const NOT_PUBLIC_DOWNLOAD_ERROR_TEXT = [
+    'private video',
+    'join this channel',
+    'members-only',
+    'member-only',
+    'this video is unavailable',
+    'video unavailable',
+    'has been removed'
+];
+const GENERIC_DOWNLOAD_ERROR_TYPES = new Set([null, undefined, 'unknown_error', 'info_retrieve_failed', 'no_output', 'no_metadata']);
 const SUBSCRIPTION_REFRESH_QUEUED_PHASE = 'queued';
 const SUBSCRIPTION_REFRESH_COMPLETE_PHASE = 'complete';
 let filename_sanitization_non_ytdlp_warned = false;
@@ -314,6 +324,20 @@ function isTransientSubscriptionDownloadError(error_message = '') {
     const normalized_message = error_message.toLowerCase();
     return TRANSIENT_SUBSCRIPTION_DOWNLOAD_ERROR_TEXT.some(error_text => normalized_message.includes(error_text));
 }
+
+function isNotPublicDownloadError(error_message = '') {
+    if (typeof error_message !== 'string') return false;
+
+    const normalized_message = error_message.toLowerCase();
+    return NOT_PUBLIC_DOWNLOAD_ERROR_TEXT.some(error_text => normalized_message.includes(error_text));
+}
+exports.isNotPublicDownloadError = isNotPublicDownloadError;
+
+function resolveDownloadErrorType(error_message = '', error_type = null) {
+    if (GENERIC_DOWNLOAD_ERROR_TYPES.has(error_type) && isNotPublicDownloadError(error_message)) return 'not_public';
+    return error_type;
+}
+exports.resolveDownloadErrorType = resolveDownloadErrorType;
 
 function asNonNegativeInteger(value, default_value = 0) {
     const numeric_value = Number(value);
