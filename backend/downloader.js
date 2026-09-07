@@ -1644,6 +1644,22 @@ exports.cancelDownload = async (download_uid) => {
     return await db_api.updateRecord('download_queue', {uid: download_uid}, {cancelled: true});
 }
 
+exports.backfillNotPublicDownloadErrorTypes = async () => {
+    const errored_downloads = await db_api.getRecords('download_queue',
+        {finished: true, error: {$ne: null}}, false, null, null,
+        ['uid', 'error', 'error_summary', 'error_type']);
+    let updated_count = 0;
+    for (const download of errored_downloads) {
+        if (download['error_type'] === 'not_public' || download['error_type'] === 'join_only') continue;
+        const message = download['error_summary'] || download['error'] || '';
+        if (!isNotPublicDownloadError(message)) continue;
+        await db_api.updateRecord('download_queue', {uid: download['uid']}, {error_type: 'not_public'});
+        updated_count++;
+    }
+    if (updated_count > 0) logger.info(`Backfilled ${updated_count} download(s) as not_public.`);
+    return updated_count;
+};
+
 exports.clearDownload = async (download_uid) => {
     const downloads = await db_api.getRecords(
         'download_queue',

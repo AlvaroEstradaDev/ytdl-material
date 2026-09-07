@@ -77,3 +77,23 @@ describe('handleDownloadError not-public persistence', function() {
         }
     });
 });
+
+describe('not-public backfill', function() {
+    it('reclassifies legacy errored records', async function() {
+        const uid = uuid();
+        await db_api.insertRecordIntoTable('download_queue', {
+            uid, url: 'https://x', error: 'ERROR: Private video. Sign in',
+            error_summary: 'ERROR: Private video. Sign in', error_type: null,
+            finished: true, running: false, paused: false
+        });
+        try {
+            const updated = await downloader_api.backfillNotPublicDownloadErrorTypes();
+            assert.ok(updated >= 1);
+            assert.strictEqual((await db_api.getRecord('download_queue', {uid})).error_type, 'not_public');
+            await downloader_api.backfillNotPublicDownloadErrorTypes();
+            assert.strictEqual((await db_api.getRecord('download_queue', {uid})).error_type, 'not_public'); // idempotent
+        } finally {
+            await db_api.removeRecord('download_queue', {uid});
+        }
+    });
+});
