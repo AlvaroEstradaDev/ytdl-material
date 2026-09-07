@@ -59,7 +59,7 @@ const DOWNLOAD_ERROR_TRUNCATION_MARKER = '\n...[download error truncated]...\n';
 const DEFAULT_INVALID_FILENAME_CHARS = '\\/:*?"<>|';
 const METADATA_FIELDS_FOR_FILENAME_SANITIZATION = 'title,fulltitle,playlist_title,uploader,channel,series,chapter,album,artist';
 const DEFAULT_YTDLP_IMPERSONATION_ARG = '--impersonate=';
-const SKIPPABLE_SUBSCRIPTION_DOWNLOAD_ERROR_TYPES = new Set(['join_only', 'no_output', 'no_downloadable_items']);
+const SKIPPABLE_SUBSCRIPTION_DOWNLOAD_ERROR_TYPES = new Set(['join_only', 'not_public', 'no_output', 'no_downloadable_items']);
 const SKIPPABLE_SUBSCRIPTION_DOWNLOAD_ERROR_TEXT = [
     'join this channel',
     'members-only',
@@ -1700,22 +1700,25 @@ async function handleDownloadError(download_uid, error_message, error_type = nul
     const download = await db_api.getRecord('download_queue', {uid: download_uid});
     if (!download || download['error']) return;
     const persisted_error_message = truncateDownloadError(error_message) || 'Unknown download error.';
-    const is_skippable_subscription_error = download['sub_id'] && isSkippableSubscriptionDownloadError(persisted_error_message, error_type);
+    const resolved_error_type = resolveDownloadErrorType(persisted_error_message, error_type);
+    const is_skippable_subscription_error = download['sub_id'] && isSkippableSubscriptionDownloadError(persisted_error_message, resolved_error_type);
     const is_transient_subscription_error = download['sub_id'] && isTransientSubscriptionDownloadError(persisted_error_message);
-    await archiveSkippedSubscriptionDownload(download, persisted_error_message, error_type);
+    await archiveSkippedSubscriptionDownload(download, persisted_error_message, resolved_error_type);
     if (!is_skippable_subscription_error) {
-        notifications_api.sendDownloadErrorNotification(download, download['user_uid'], persisted_error_message, error_type);
+        notifications_api.sendDownloadErrorNotification(download, download['user_uid'], persisted_error_message, resolved_error_type);
     }
     await db_api.updateRecord('download_queue', {uid: download['uid']}, {
         error: persisted_error_message,
         error_summary: persisted_error_message,
         finished: true,
         running: false,
-        error_type: error_type
+        error_type: resolved_error_type
     });
-    await updateSubscriptionRefreshStatusForSkippedDownload(download, persisted_error_message, error_type);
+    await updateSubscriptionRefreshStatusForSkippedDownload(download, persisted_error_message, resolved_error_type);
     if (is_transient_subscription_error) await db_api.removeRecord('download_queue', {uid: download['uid']});
 }
+
+exports.handleDownloadError = handleDownloadError;
 
 async function archiveSkippedSubscriptionDownload(download = null, error_message = '', error_type = null) {
     if (!download || !download['sub_id']) return false;
@@ -2704,7 +2707,7 @@ exports.getVideoInfoByURL = async (url, args = [], download_uid = null, options 
     if (!parsed_output || parsed_output.length === 0) {
         const error_details = describeInfoLookupError(err, downloader_fork);
         const is_join_only = error_details.includes('Join this channel to get access to members-only content');
-        const error_type = is_join_only ? 'join_only' : 'info_retrieve_failed';
+        const error_type = isNotPublicDownloadError(error_details) ? 'not_public' : 'info_retrieve_failed';
         const error_message = `Error while retrieving info on video with URL ${url} with the following message: ${error_details}`;
         logger.error(error_message);
         if (download_uid) {
