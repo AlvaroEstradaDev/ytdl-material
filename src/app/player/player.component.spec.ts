@@ -27,7 +27,13 @@ describe('PlayerComponent', () => {
         },
         Subscriptions: {
           subscriptions_base_path: '/tmp/subscriptions'
+        },
+        Advanced: {
+          multi_user_mode: false
         }
+      },
+      theme: {
+        drawer_color: '#fff'
       },
       setPageTitle: vi.fn().mockName('setPageTitle'),
       openSnackBar: vi.fn().mockName('openSnackBar'),
@@ -87,6 +93,26 @@ describe('PlayerComponent', () => {
   function actionBarButtons(): HTMLButtonElement[] {
     const row = fixture.debugElement.query(By.css('.action-buttons-row'));
     return row ? Array.from(row.nativeElement.querySelectorAll('button')) : [];
+  }
+
+  function playerToolbar(): HTMLElement | null {
+    return fixture.nativeElement.querySelector('.player-toolbar-section');
+  }
+
+  function playerPlaylist(): HTMLElement | null {
+    return fixture.nativeElement.querySelector('.player-playlist-section');
+  }
+
+  function playerPage(): HTMLElement | null {
+    return fixture.nativeElement.querySelector('.player-page');
+  }
+
+  function playlistRows(): HTMLElement[] {
+    return Array.from(fixture.nativeElement.querySelectorAll('.playlist-row'));
+  }
+
+  function playlistAutoplayButtons(): HTMLButtonElement[] {
+    return Array.from(fixture.nativeElement.querySelectorAll('.playlist-autoplay-button'));
   }
 
   // The whole toolbar sits behind the player's own guard, so a spec has to get far enough
@@ -174,31 +200,185 @@ describe('PlayerComponent', () => {
   it('should mark only the engaged playback toggles', () => {
     showPlayer();
     component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as any;
-    component.autoplay_enabled = true;
+    component.theater_mode_enabled = true;
     component.repeat_enabled = false;
     fixture.detectChanges();
 
     const toggles = actionBarButtons().filter(button => button.classList.contains('playback-mode-button'));
-    const autoplay = toggles.find(button => button.getAttribute('aria-label') === 'Autoplay');
+    const theaterMode = toggles.find(button => button.getAttribute('aria-label') === 'Theater mode');
     const repeat = toggles.find(button => button.getAttribute('aria-label') === 'Repeat current video');
     // Idle toggles carry no marker at all, so they render at the same colour as the
     // actions beside them rather than dimmed.
-    expect(autoplay.classList.contains('active')).toBe(true);
+    expect(theaterMode.classList.contains('active')).toBe(true);
     expect(repeat.classList.contains('active')).toBe(false);
   });
 
   it('should mark playback toggles as pressed for assistive tech', () => {
     showPlayer();
     component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as any;
-    component.autoplay_enabled = true;
+    component.theater_mode_enabled = true;
     component.repeat_enabled = false;
     fixture.detectChanges();
 
     const toggles = actionBarButtons().filter(button => button.classList.contains('playback-mode-button'));
-    const autoplay = toggles.find(button => button.getAttribute('aria-label') === 'Autoplay');
+    const theaterMode = toggles.find(button => button.getAttribute('aria-label') === 'Theater mode');
     const repeat = toggles.find(button => button.getAttribute('aria-label') === 'Repeat current video');
-    expect(autoplay.getAttribute('aria-pressed')).toBe('true');
+    expect(theaterMode.getAttribute('aria-pressed')).toBe('true');
     expect(repeat.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('should put autoplay only on the current playlist row and keep its click on that control', () => {
+    showPlayer();
+    const currentItem = component.currentItem;
+    const updateCurrentItem = vi.spyOn(component, 'updateCurrentItem');
+    fixture.detectChanges();
+
+    expect(actionBarButtons().some(button => button.getAttribute('aria-label') === 'Autoplay')).toBe(false);
+    expect(playlistAutoplayButtons()).toHaveLength(1);
+    expect(playlistRows()[0].querySelector('.playlist-autoplay-button')).toBeTruthy();
+
+    playlistAutoplayButtons()[0].click();
+    fixture.detectChanges();
+
+    expect(component.currentItem).toBe(currentItem);
+    expect(updateCurrentItem).not.toHaveBeenCalled();
+    expect(component.autoplay_enabled).toBe(true);
+    expect(playlistAutoplayButtons()[0].getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('should move the autoplay control with the playing item', () => {
+    component.playlist_id = 'playlist-1';
+    component.file_objs = [
+      {uid: 'f1', title: 'First video', isAudio: false, url: 'https://example.com/first'} as DatabaseFile,
+      {uid: 'f2', title: 'Second video', isAudio: false, url: 'https://example.com/second'} as DatabaseFile
+    ];
+    component.uids = ['f1', 'f2'];
+    component.parseFileNames();
+    fixture.detectChanges();
+
+    expect(playlistRows()[0].querySelector('.playlist-autoplay-button')).toBeTruthy();
+    expect(playlistRows()[1].querySelector('.playlist-autoplay-button')).toBeFalsy();
+
+    component.onClickPlaylistItem(component.playlist[1], 1);
+    fixture.detectChanges();
+
+    expect(playlistRows()[0].querySelector('.playlist-autoplay-button')).toBeFalsy();
+    expect(playlistRows()[1].querySelector('.playlist-autoplay-button')).toBeTruthy();
+
+    component.drop({previousIndex: 1, currentIndex: 0} as any);
+    fixture.detectChanges();
+
+    expect(component.currentIndex).toBe(0);
+    expect(playlistRows()[0].querySelector('.playlist-autoplay-button')).toBeTruthy();
+  });
+
+  it('should place theater mode before download and make the video the only visible player content', () => {
+    showPlayer();
+    component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as DatabaseFile;
+    component.api = {state: 'paused', time: {current: 0}} as unknown as VgApiService;
+    postsServiceStub.isLoggedIn = false;
+    fixture.detectChanges();
+
+    const buttons = actionBarButtons();
+    const theaterModeIndex = buttons.findIndex(button => button.getAttribute('aria-label') === 'Theater mode');
+    const downloadIndex = buttons.findIndex(button => button.getAttribute('aria-label') === 'Download this file');
+    const shareIndex = buttons.findIndex(button => button.getAttribute('aria-label') === 'Share');
+    expect(theaterModeIndex).toBeGreaterThan(-1);
+    expect(downloadIndex).toBe(theaterModeIndex + 1);
+    expect(shareIndex).toBe(downloadIndex + 1);
+
+    buttons[theaterModeIndex].click();
+    fixture.detectChanges();
+
+    expect(component.theater_mode_enabled).toBe(true);
+    expect(buttons[theaterModeIndex].getAttribute('aria-pressed')).toBe('true');
+    expect(playerPage()?.classList.contains('theater-mode-active')).toBe(true);
+    expect(document.body.classList.contains('player-theater-mode-active')).toBe(true);
+    expect(playerToolbar()?.classList.contains('theater-toolbar-visible')).toBe(false);
+    expect(playerPlaylist()?.hidden).toBe(true);
+    expect(fixture.nativeElement.querySelector('.watch-together-section')?.hidden).toBe(true);
+    expect(fixture.nativeElement.querySelector('.video-player')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('.video-blackout-overlay')).toBeFalsy();
+    expect(component.currentItem?.uid).toBe('f1');
+  });
+
+  it('should reveal the theater toolbar on video hover, keep it usable, and hide it after inactivity', fakeAsync(() => {
+    showPlayer();
+    component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as DatabaseFile;
+    fixture.detectChanges();
+
+    const theaterMode = actionBarButtons().find(button => button.getAttribute('aria-label') === 'Theater mode');
+    theaterMode.focus();
+    expect(document.activeElement).toBe(theaterMode);
+    theaterMode.click();
+    fixture.detectChanges();
+
+    expect(playerToolbar()?.classList.contains('theater-toolbar-visible')).toBe(false);
+    expect(document.activeElement).not.toBe(theaterMode);
+    expect(playerPlaylist()?.hidden).toBe(true);
+
+    const playerElement = fixture.nativeElement.querySelector('vg-player') as HTMLElement;
+    component.onPlayerMouseMove({currentTarget: playerElement, clientY: 100} as unknown as MouseEvent);
+    fixture.detectChanges();
+
+    expect(playerToolbar()?.classList.contains('theater-toolbar-visible')).toBe(true);
+
+    component.onTheaterToolbarMouseEnter();
+    tick(2500);
+    fixture.detectChanges();
+    expect(playerToolbar()?.classList.contains('theater-toolbar-visible')).toBe(true);
+
+    component.onTheaterToolbarMouseLeave();
+    tick(2000);
+    fixture.detectChanges();
+    expect(playerToolbar()?.classList.contains('theater-toolbar-visible')).toBe(false);
+  }));
+
+  it('should exit theater mode with Escape and restore the surrounding controls', () => {
+    showPlayer();
+    component.db_file = {uid: 'f1', title: 'A video', url: 'https://example.com/watch', isAudio: false} as DatabaseFile;
+    fixture.detectChanges();
+
+    actionBarButtons().find(button => button.getAttribute('aria-label') === 'Theater mode').click();
+    fixture.detectChanges();
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+    fixture.detectChanges();
+
+    expect(component.theater_mode_enabled).toBe(false);
+    expect(document.body.classList.contains('player-theater-mode-active')).toBe(false);
+    expect(playerPlaylist()?.hidden).toBe(false);
+  });
+
+  it('should not offer theater mode for audio', () => {
+    component.playlist_id = 'playlist-1';
+    component.file_objs = [
+      {uid: 'a1', title: 'An audio track', isAudio: true, url: 'https://example.com/audio'} as DatabaseFile
+    ];
+    component.uids = ['a1'];
+    component.parseFileNames();
+    fixture.detectChanges();
+
+    expect(actionBarButtons().some(button => button.getAttribute('aria-label') === 'Theater mode')).toBe(false);
+    component.toggleTheaterMode();
+    expect(component.theater_mode_enabled).toBe(false);
+  });
+
+  it('should expose row autoplay and theater mode when playing a subscription', () => {
+    component.sub_id = 'subscription-1';
+    component.subscription = {
+      id: 'subscription-1',
+      type: 'video',
+      videos: [
+        {uid: 's1', title: 'Subscriber video', isAudio: false, url: 'https://example.com/subscriber'} as DatabaseFile
+      ]
+    } as any;
+    component.type = component.subscription.type;
+    component.uids = ['s1'];
+    component.parseFileNames();
+    fixture.detectChanges();
+
+    expect(playlistAutoplayButtons()).toHaveLength(1);
+    expect(actionBarButtons().some(button => button.getAttribute('aria-label') === 'Theater mode')).toBe(true);
   });
 
   it('should create', () => {
