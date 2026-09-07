@@ -31,7 +31,10 @@ const notifications_api = require('../notifications');
 
 describe('handleDownloadError not-public persistence', function() {
     const original_notify = notifications_api.sendDownloadErrorNotification;
-    before(() => { notifications_api.sendDownloadErrorNotification = async () => {}; });
+    let notify_calls = 0;
+    before(() => {
+        notifications_api.sendDownloadErrorNotification = async () => { notify_calls += 1; };
+    });
     after(() => { notifications_api.sendDownloadErrorNotification = original_notify; });
 
     it('overrides unknown_error with not_public for private videos', async function() {
@@ -40,13 +43,37 @@ describe('handleDownloadError not-public persistence', function() {
             uid, url: 'https://x', error: null, error_summary: null, error_type: null,
             finished: false, running: true, paused: false
         });
-        await downloader_api.handleDownloadError(uid, 'ERROR: Private video. Sign in', 'unknown_error');
-        const record = await db_api.getRecord('download_queue', {uid});
-        assert.strictEqual(record.error_type, 'not_public');
-        await db_api.removeRecord('download_queue', {uid});
+        try {
+            await downloader_api.handleDownloadError(uid, 'ERROR: Private video. Sign in', 'unknown_error');
+            const record = await db_api.getRecord('download_queue', {uid});
+            assert.strictEqual(record.error_type, 'not_public');
+            assert.strictEqual(record.finished, true);
+            assert.ok(record.error && record.error.length > 0);
+            assert.ok(record.error_summary && record.error_summary.length > 0);
+        } finally {
+            await db_api.removeRecord('download_queue', {uid});
+        }
     });
 
     it('treats not_public as skippable for subscriptions', function() {
         assert.strictEqual(downloader_api.isSkippableSubscriptionDownloadError('x', 'not_public'), true);
+    });
+
+    it('suppresses notification and persists not_public for subscription downloads', async function() {
+        const uid = uuid();
+        notify_calls = 0;
+        await db_api.insertRecordIntoTable('download_queue', {
+            uid, url: 'https://x', error: null, error_summary: null, error_type: null,
+            sub_id: 'test-sub', user_uid: 'test-user',
+            finished: false, running: true, paused: false
+        });
+        try {
+            await downloader_api.handleDownloadError(uid, 'ERROR: Private video. Sign in', 'unknown_error');
+            const record = await db_api.getRecord('download_queue', {uid});
+            assert.strictEqual(record.error_type, 'not_public');
+            assert.strictEqual(notify_calls, 0);
+        } finally {
+            await db_api.removeRecord('download_queue', {uid});
+        }
     });
 });

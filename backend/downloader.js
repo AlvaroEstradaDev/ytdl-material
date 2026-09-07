@@ -76,6 +76,7 @@ const TRANSIENT_SUBSCRIPTION_DOWNLOAD_ERROR_TEXT = [
     'premieres in',
     'this live event will begin'
 ];
+// Must stay consistent with SKIPPABLE_SUBSCRIPTION_DOWNLOAD_ERROR_TEXT, which additionally carries transient premiere/live phrases and the no-output phrase.
 const NOT_PUBLIC_DOWNLOAD_ERROR_TEXT = [
     'private video',
     'join this channel',
