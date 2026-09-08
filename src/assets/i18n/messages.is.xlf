@@ -4272,41 +4272,15 @@
         </context-group>
         <note priority="1" from="description">Select a version</note>
       </trans-unit>
-      <trans-unit id="6516753512527570181" datatype="html">
-        <source>Not public</source>
-        <target>Ekki opinbert</target>
-        <context-group purpose="location">
-          <context context-type="sourcefile">src/app/components/downloads/downloads.component.html</context>
-          <context context-type="linenumber">182,184</context>
-        </context-group>
+      <trans-unit id="840264455199725883" datatype="html">
+        <source>Paused</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/components/downloads/downloads.component.ts</context>
-          <context context-type="linenumber">966</context>
+          <context context-type="linenumber">964</context>
         </context-group>
-        <note priority="1" from="description">Not public</note>
-      </trans-unit>
-      <trans-unit id="8204176479746810612" datatype="html">
-        <source>Active</source>
-        <target>Virkt</target>
         <context-group purpose="location">
-          <context context-type="sourcefile">src/app/components/downloads/downloads.component.ts</context>
-          <context context-type="linenumber">958</context>
-        </context-group>
-      </trans-unit>
-      <trans-unit id="2605029707952742444" datatype="html">
-        <source>Errored</source>
-        <target>Villa</target>
-        <context-group purpose="location">
-          <context context-type="sourcefile">src/app/components/downloads/downloads.component.ts</context>
-          <context context-type="linenumber">967</context>
-        </context-group>
-      </trans-unit>
-      <trans-unit id="4043049091728011235" datatype="html">
-        <source>Cancelled</source>
-        <target>Hætt við</target>
-        <context-group purpose="location">
-          <context context-type="sourcefile">src/app/components/downloads/downloads.component.ts</context>
-          <context context-type="linenumber">968</context>
+          <context context-type="sourcefile">src/app/dialogs/edit-subscription-dialog/edit-subscription-dialog.component.html</context>
+          <context context-type="linenumber">11,14</context>
         </context-group>
       </trans-unit>
     </body>
