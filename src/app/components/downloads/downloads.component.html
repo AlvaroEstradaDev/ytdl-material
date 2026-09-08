@@ -178,7 +178,11 @@
             }
           }
           @if (element.error) {
-            <ng-container i18n="Error">Error</ng-container>
+            @if (isNotPublicDownload(element)) {
+              <ng-container i18n="Not public">Not public</ng-container>
+            } @else {
+              <ng-container i18n="Error">Error</ng-container>
+            }
           }
         </mat-cell>
       </ng-container>

@@ -204,4 +204,22 @@ describe('DownloadsComponent', () => {
     expect(merged.map(item => item.index)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(merged.map(item => item.title)).toEqual(['A', 'B', 'C', 'D', 'E', 'F']);
   });
+
+  it('derives not-public stage for classified errors', () => {
+    const np = { error: 'Private video', error_type: 'not_public', finished: true } as unknown as Download;
+    const legacy = { error: 'Join this channel', error_type: 'join_only', finished: true } as unknown as Download;
+    const generic = { error: 'boom', error_type: 'unknown_error', finished: true } as unknown as Download;
+    expect(component.deriveStage(np)).toBe('not-public');
+    expect(component.deriveStage(legacy)).toBe('not-public');
+    expect(component.deriveStage(generic)).toBe('errored');
+  });
+
+  it('excludes not-public downloads from retry-all', () => {
+    const d = { error: 'Private video', error_type: 'not_public', finished: true, cancelled: false } as unknown as Download;
+    expect((component as any).isFailedDownload(d)).toBe(false);
+  });
+
+  it('offers a not-public progress filter option', () => {
+    expect(component.progressStageOptions.flatMap(g => g.items.map(i => i.key))).toContain('not-public');
+  });
 });

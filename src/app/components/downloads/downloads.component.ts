@@ -316,8 +316,13 @@ export class DownloadsComponent implements OnInit, OnDestroy {
     });
   }
 
+  isNotPublicDownload(download: Download): boolean {
+    return !!download.error && (download.error_type === 'not_public' || download.error_type === 'join_only');
+  }
+
   private isFailedDownload(download: Download): boolean {
-    return !!download && !!download.error && !download.cancelled && download.error_type !== 'cancelled';
+    return !!download && !!download.error && !download.cancelled
+      && download.error_type !== 'cancelled' && !this.isNotPublicDownload(download);
   }
 
   pageChangeEvent(event: { limit: number; offset: number }): void {
@@ -791,7 +796,7 @@ export class DownloadsComponent implements OnInit, OnDestroy {
   deriveStage(download: Download): string {
     if (download.cancelled) return 'cancelled';
     if (download.paused) return 'paused';
-    if (download.finished && download.error) return 'errored';
+    if (download.finished && download.error) return this.isNotPublicDownload(download) ? 'not-public' : 'errored';
     if (download.finished) return 'complete';
     if (download.step_index === 0) return 'active-creating';
     if (download.step_index === 1) return 'active-getting-info';
@@ -958,6 +963,7 @@ const PROGRESS_STAGE_OPTIONS = [
   { group: null, items: [
     { key: 'paused', label: $localize`Paused` },
     { key: 'complete', label: $localize`Complete` },
+    { key: 'not-public', label: $localize`Not public` },
     { key: 'errored', label: $localize`Errored` },
     { key: 'cancelled', label: $localize`Cancelled` },
   ]},
