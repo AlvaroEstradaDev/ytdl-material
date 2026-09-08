@@ -436,7 +436,7 @@ async function startServer() {
     const sslKeyPath = config_api.getConfigItem('ytdl_ssl_key_path');
 
     // Reclassify legacy errored downloads (private/members-only/unavailable) as not_public.
-    await downloader_api.backfillNotPublicDownloadErrorTypes().catch(error => logger.warn(`Not-public backfill skipped: ${error}`));
+    await downloader_api.backfillNotPublicDownloadErrorTypes().catch(error => logger.warn(`Not-public backfill failed: ${error}`));
 
     let server;
 

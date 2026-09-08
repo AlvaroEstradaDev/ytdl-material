@@ -122,6 +122,19 @@ describe('Database', async function() {
                     await db_api.removeRecord('test', {test_update: 'test'});
                 });
 
+                it('Update records with $in operator filter', async function() {
+                    await db_api.insertRecordIntoTable('test', {test_update: 'test', key: 'op_in_a'});
+                    await db_api.insertRecordIntoTable('test', {test_update: 'test', key: 'op_in_b'});
+                    await db_api.insertRecordIntoTable('test', {test_update: 'test', key: 'op_in_c'});
+                    await db_api.updateRecords('test', {key: {$in: ['op_in_a', 'op_in_c']}}, {test_update: 'in-updated'});
+                    const updated_records = await db_api.getRecords('test', {test_update: 'in-updated'});
+                    assert.strictEqual(updated_records.length, 2);
+                    const untouched_record = await db_api.getRecord('test', {key: 'op_in_b'});
+                    assert.strictEqual(untouched_record['test_update'], 'test');
+                    await db_api.removeRecord('test', {test_update: 'in-updated'});
+                    await db_api.removeRecord('test', {key: 'op_in_b'});
+                });
+
                 it('Remove property from record', async function() {
                     await db_api.insertRecordIntoTable('test', {test_keep: 'test', test_remove: 'test'});
                     await db_api.removePropertyFromRecord('test', {test_keep: 'test'}, {test_remove: true});

@@ -81,19 +81,29 @@ describe('handleDownloadError not-public persistence', function() {
 describe('not-public backfill', function() {
     it('reclassifies legacy errored records', async function() {
         const uid = uuid();
+        const control_uid = uuid();
         await db_api.insertRecordIntoTable('download_queue', {
             uid, url: 'https://x', error: 'ERROR: Private video. Sign in',
             error_summary: 'ERROR: Private video. Sign in', error_type: null,
+            finished: true, running: false, paused: false
+        });
+        // Control row: errored, but its message does not match the not-public text list.
+        await db_api.insertRecordIntoTable('download_queue', {
+            uid: control_uid, url: 'https://x', error: 'Sign in to confirm your age',
+            error_summary: 'Sign in to confirm your age', error_type: null,
             finished: true, running: false, paused: false
         });
         try {
             const updated = await downloader_api.backfillNotPublicDownloadErrorTypes();
             assert.ok(updated >= 1);
             assert.strictEqual((await db_api.getRecord('download_queue', {uid})).error_type, 'not_public');
+            assert.strictEqual((await db_api.getRecord('download_queue', {uid: control_uid})).error_type, null);
             await downloader_api.backfillNotPublicDownloadErrorTypes();
             assert.strictEqual((await db_api.getRecord('download_queue', {uid})).error_type, 'not_public'); // idempotent
+            assert.strictEqual((await db_api.getRecord('download_queue', {uid: control_uid})).error_type, null);
         } finally {
             await db_api.removeRecord('download_queue', {uid});
+            await db_api.removeRecord('download_queue', {uid: control_uid});
         }
     });
 });

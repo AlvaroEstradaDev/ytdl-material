@@ -347,6 +347,58 @@ function sanitizeMongoLiteralFilter(filter_obj) {
     return sanitized;
 }
 
+// Operator whitelist for bulk-update filters: the common set every backend
+// supports (local_db recordMatchesLocalFilter, postgres buildFilterClause,
+// mongo natively). $nin/$not and the logical containers ($and/$or/$nor) are
+// intentionally absent because postgres buildFilterClause has no branch for
+// them and would fall through to a garbage equality clause.
+const UPDATE_FILTER_OPERATORS = new Set(['$eq', '$ne', '$in', '$lt', '$lte', '$gt', '$gte', '$regex', '$options']);
+
+// Like sanitizeMongoLiteralFilter, but allows per-field operator objects
+// (e.g. {uid: {$in: [...]}}) after validating keys and values. Literal values
+// are normalized to {$eq: ...} exactly as before, so existing literal filters
+// sanitize identically.
+function sanitizeMongoOperatorFilter(filter_obj) {
+    if (!isPlainObject(filter_obj)) {
+        throw new Error('Mongo filter object must be a plain object.');
+    }
+
+    const sanitized = {};
+    for (const key of Object.keys(filter_obj)) {
+        validateMongoFieldPath(key);
+        const value = filter_obj[key];
+        if (value !== null && value !== undefined && isPlainObject(value)) {
+            const operator_keys = Object.keys(value);
+            if (operator_keys.length === 0) {
+                throw new Error(`Refusing empty operator filter for '${key}'.`);
+            }
+            const sanitized_operator = {};
+            for (const operator_key of operator_keys) {
+                if (!UPDATE_FILTER_OPERATORS.has(operator_key)) {
+                    throw new Error(`Unsupported operator '${operator_key}' in filter for '${key}'.`);
+                }
+                if (operator_key === '$in') {
+                    if (!Array.isArray(value['$in'])) {
+                        throw new Error(`$in filter for '${key}' must be an array.`);
+                    }
+                    sanitized_operator['$in'] = value['$in'].map(sanitizeMongoLiteralValue);
+                } else if (operator_key === '$regex' || operator_key === '$options') {
+                    if (typeof value[operator_key] !== 'string') {
+                        throw new Error(`'${operator_key}' filter for '${key}' must be a string.`);
+                    }
+                    sanitized_operator[operator_key] = value[operator_key];
+                } else {
+                    sanitized_operator[operator_key] = sanitizeMongoLiteralValue(value[operator_key]);
+                }
+            }
+            sanitized[key] = sanitized_operator;
+        } else {
+            sanitized[key] = {$eq: sanitizeMongoLiteralValue(value)};
+        }
+    }
+    return sanitized;
+}
+
 function sanitizeMongoUpdateSetObject(update_obj) {
     if (!isPlainObject(update_obj)) {
         throw new Error('Mongo update object must be a plain object.');
@@ -1212,7 +1264,7 @@ exports.updateRecords = async (table, filter_obj, update_obj) => {
 
     let sanitized_filter_obj = null;
     try {
-        sanitized_filter_obj = sanitizeMongoLiteralFilter(filter_obj || {});
+        sanitized_filter_obj = sanitizeMongoOperatorFilter(filter_obj || {});
     } catch (err) {
         logger.error(`Refusing unsafe bulk update filter for table '${table}': ${err.message}`);
         return false;

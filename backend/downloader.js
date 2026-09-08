@@ -15,6 +15,7 @@ const db_api = require('./db');
 const files_api = require('./files');
 const notifications_api = require('./notifications');
 const archive_api = require('./archive');
+const { NOT_PUBLIC_ERROR_TYPES } = require('./utils/downloads-filters');
 
 const mutex = new Mutex();
 const playlist_batch_finalization_mutex = new Mutex();
@@ -1648,16 +1649,21 @@ exports.backfillNotPublicDownloadErrorTypes = async () => {
     const errored_downloads = await db_api.getRecords('download_queue',
         {finished: true, error: {$ne: null}}, false, null, null,
         ['uid', 'error', 'error_summary', 'error_type']);
-    let updated_count = 0;
+    const matched_uids = [];
     for (const download of errored_downloads) {
-        if (download['error_type'] === 'not_public' || download['error_type'] === 'join_only') continue;
+        // Already-typed not_public/join_only rows are skipped; rows with specific non-generic
+        // error types (e.g. 'cancelled') are not reclassified because their messages never
+        // match the not-public text list.
+        if (NOT_PUBLIC_ERROR_TYPES.includes(download['error_type'])) continue;
         const message = download['error_summary'] || download['error'] || '';
         if (!isNotPublicDownloadError(message)) continue;
-        await db_api.updateRecord('download_queue', {uid: download['uid']}, {error_type: 'not_public'});
-        updated_count++;
+        matched_uids.push(download['uid']);
     }
-    if (updated_count > 0) logger.info(`Backfilled ${updated_count} download(s) as not_public.`);
-    return updated_count;
+    if (matched_uids.length > 0) {
+        await db_api.updateRecords('download_queue', {uid: {$in: matched_uids}}, {error_type: 'not_public'});
+        logger.info(`Backfilled ${matched_uids.length} download(s) as not_public.`);
+    }
+    return matched_uids.length;
 };
 
 exports.clearDownload = async (download_uid) => {
