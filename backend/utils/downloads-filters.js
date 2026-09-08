@@ -2,7 +2,7 @@
 
 // Each STAGE_QUERIES entry is a Mongo predicate over raw download fields.
 // Keep in sync with DownloadsComponent.deriveStage() in
-// src/app/components/downloads/downloads.component.ts (lines ~791-799).
+// src/app/components/downloads/downloads.component.ts.
 // The 'not-public' stage carves downloads that failed with a not-public error
 // (NOT_PUBLIC_ERROR_TYPES) out of 'errored'.
 // The contract test in downloads-filters.contract.test.js pins both sides

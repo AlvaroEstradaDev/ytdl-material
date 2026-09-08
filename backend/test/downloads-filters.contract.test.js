@@ -4,7 +4,8 @@ const { STAGE_QUERIES } = require('../utils/downloads-filters');
 const { matchesPredicate } = require('./helpers/mongo-predicate');
 
 // Mirrors DownloadsComponent.deriveStage() exactly.
-// Source of truth: src/app/components/downloads/downloads.component.ts:791-799.
+// Source of truth: DownloadsComponent.deriveStage() in
+// src/app/components/downloads/downloads.component.ts.
 // If the client function changes, UPDATE BOTH this mirror and STAGE_QUERIES, then re-run.
 function deriveStage(download) {
     if (download.cancelled) return 'cancelled';

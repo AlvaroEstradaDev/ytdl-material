@@ -39,6 +39,7 @@ describe('handleDownloadError not-public persistence', function() {
 
     it('overrides unknown_error with not_public for private videos', async function() {
         const uid = uuid();
+        notify_calls = 0;
         await db_api.insertRecordIntoTable('download_queue', {
             uid, url: 'https://x', error: null, error_summary: null, error_type: null,
             finished: false, running: true, paused: false
@@ -50,6 +51,7 @@ describe('handleDownloadError not-public persistence', function() {
             assert.strictEqual(record.finished, true);
             assert.ok(record.error && record.error.length > 0);
             assert.ok(record.error_summary && record.error_summary.length > 0);
+            assert.strictEqual(notify_calls, 1);
         } finally {
             await db_api.removeRecord('download_queue', {uid});
         }

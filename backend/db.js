@@ -347,11 +347,15 @@ function sanitizeMongoLiteralFilter(filter_obj) {
     return sanitized;
 }
 
-// Operator whitelist for bulk-update filters: the common set every backend
-// supports (local_db recordMatchesLocalFilter, postgres buildFilterClause,
-// mongo natively). $nin/$not and the logical containers ($and/$or/$nor) are
-// intentionally absent because postgres buildFilterClause has no branch for
-// them and would fall through to a garbage equality clause.
+// Operator whitelist for bulk-update filters: bounded to the operators all
+// three backends translate (local_db recordMatchesLocalFilter, postgres
+// buildFilterClause, mongo natively). $eq is whitelisted but never reaches
+// the local matcher: updateRecords' local branch evaluates the raw filter
+// without sanitizeMongoOperatorFilter, and recordMatchesLocalFilter has no
+// $eq branch (unknown operators there fall through to match-all).
+// $nin/$not and the logical containers ($and/$or/$nor) are intentionally
+// absent because postgres buildFilterClause has no branch for them and would
+// fall through to a garbage equality clause.
 const UPDATE_FILTER_OPERATORS = new Set(['$eq', '$ne', '$in', '$lt', '$lte', '$gt', '$gte', '$regex', '$options']);
 
 // Like sanitizeMongoLiteralFilter, but allows per-field operator objects

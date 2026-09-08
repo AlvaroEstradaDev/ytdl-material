@@ -214,6 +214,18 @@ describe('DownloadsComponent', () => {
     expect(component.deriveStage(generic)).toBe('errored');
   });
 
+  it('keeps cancelled and paused precedence over not-public', () => {
+    const cancelled = { error: 'Private video', error_type: 'not_public', finished: true, cancelled: true } as unknown as Download;
+    const paused = { error: 'Private video', error_type: 'not_public', finished: true, paused: true } as unknown as Download;
+    expect(component.deriveStage(cancelled)).toBe('cancelled');
+    expect(component.deriveStage(paused)).toBe('paused');
+  });
+
+  it('still treats generic errors as failed downloads', () => {
+    const d = { error: 'boom', error_type: 'unknown_error', finished: true, cancelled: false } as unknown as Download;
+    expect((component as any).isFailedDownload(d)).toBe(true);
+  });
+
   it('excludes not-public downloads from retry-all', () => {
     const d = { error: 'Private video', error_type: 'not_public', finished: true, cancelled: false } as unknown as Download;
     expect((component as any).isFailedDownload(d)).toBe(false);
