@@ -1945,6 +1945,7 @@ app.post('/api/subscribe', optionalJwt, requirePermission('subscriptions'), asyn
     let useSubfolder = req.body.useSubfolder;
     let audioFormat = req.body.audioFormat;
     let autoCreatePlaylist = req.body.autoCreatePlaylist;
+    let shortsMode = req.body.shortsMode;
     let user_uid = req.isAuthenticated() ? req.user.uid : null;
     const new_sub = {
                         name: name,
@@ -1972,6 +1973,11 @@ app.post('/api/subscribe', optionalJwt, requirePermission('subscriptions'), asyn
 
     if (audioFormat && audioFormat !== '') {
         new_sub.audio_format = audioFormat;
+    }
+
+    const normalized_shorts_mode = subscriptions_api.normalizeSubscriptionShortsMode(shortsMode);
+    if (shortsMode && normalized_shorts_mode !== 'all') {
+        new_sub.shorts_mode = normalized_shorts_mode;
     }
 
     const refusal = await refuseUnsafeDownloadOptions(req, {customArgs: customArgs, customOutput: customOutput}, url);
