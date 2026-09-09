@@ -115,6 +115,8 @@ describe('Transcoding', function() {
     });
 
     it('runFlightTest reports decode availability without claiming encode failed', async function() {
+        // Runs the real ffmpeg encode+decode flight probes (~3s on hardware).
+        this.timeout(15000);
         const original_value = config_api.getConfigItem('ytdl_transcoding');
         try {
             config_api.setConfigItem('ytdl_transcoding', 'nvenc');

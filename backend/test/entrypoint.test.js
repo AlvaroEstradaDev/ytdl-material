@@ -51,7 +51,10 @@ function runEntrypointDetailed({
     writeStub(binDir, 'id', 'case "$1" in -u) printf "%s" "$ENTRYPOINT_UID" ;; -g) printf "%s" "$ENTRYPOINT_GID" ;; -G) printf "%s" "$ENTRYPOINT_GROUPS" ;; *) exit 1 ;; esac');
     writeStub(binDir, 'find', 'exit 0');
     writeStub(binDir, 'dpkg-query', 'for package_name do :; done; case " $ENTRYPOINT_PACKAGES " in *" $package_name "*) printf "install ok installed" ;; *) exit 1 ;; esac');
-    writeStub(binDir, 'ls', 'case "$*" in *iHD_drv_video.so*) [ "$ENTRYPOINT_INTEL_DRIVER" = "true" ] ;; *) [ "$ENTRYPOINT_VA_DRIVER" = "true" ] ;; esac');
+    // The entrypoint probes drivers via shell globs (`ls /usr/lib/*/dri/*_drv_video.so`);
+    // on hosts with real DRI drivers the shell expands them before this stub runs, so
+    // decide per argument rather than on the literal pattern string.
+    writeStub(binDir, 'ls', 'for driver_arg in "$@"; do case "$driver_arg" in *iHD_drv_video.so) [ "$ENTRYPOINT_INTEL_DRIVER" = "true" ] && exit 0 ;; *_drv_video.so) [ "$ENTRYPOINT_VA_DRIVER" = "true" ] && exit 0 ;; esac; done; exit 1');
     writeStub(binDir, 'rm', 'exit 0');
     writeStub(binDir, 'apt-get', 'printf "apt-get %s\\n" "$*" >> "$ENTRYPOINT_CALLS"');
     writeStub(binDir, 'gosu', 'printf "gosu %s\\n" "$*" >> "$ENTRYPOINT_CALLS"');
