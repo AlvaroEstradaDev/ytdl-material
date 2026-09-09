@@ -22,6 +22,23 @@ export class SubscribeDialogComponent implements OnInit {
 
   maxQuality = 'best';
 
+  shortsMode: 'all' | 'exclude' | 'only' = 'all';
+
+  shorts_mode_options = [
+    {
+      'label': $localize`All videos`,
+      'value': 'all'
+    },
+    {
+      'label': $localize`Skip Shorts`,
+      'value': 'exclude'
+    },
+    {
+      'label': $localize`Only Shorts`,
+      'value': 'only'
+    }
+  ];
+
   // state
   subscribing = false;
 
@@ -92,7 +109,7 @@ export class SubscribeDialogComponent implements OnInit {
       }
       this.postsService.createSubscription(this.url, this.name, timerange, this.maxQuality,
                                           this.audioOnlyMode, this.customArgs, this.customFileOutput, this.useSubfolder,
-                                          this.autoCreatePlaylist, this.audioFormat).subscribe(res => {
+                                          this.autoCreatePlaylist, this.audioFormat, this.shortsMode).subscribe(res => {
         this.subscribing = false;
         if (res['new_sub']) {
           this.dialogRef.close(res['new_sub']);

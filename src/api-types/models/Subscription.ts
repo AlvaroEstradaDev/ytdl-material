@@ -16,6 +16,7 @@ export type Subscription = {
     child_process?: any;
     archive?: string;
     timerange?: string;
+    shorts_mode?: 'all' | 'exclude' | 'only';
     custom_args?: string;
     custom_output?: string;
     audio_format?: string;

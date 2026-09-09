@@ -63,6 +63,16 @@
           </mat-select>
         </mat-form-field>
       </div>
+      <div class="col-12 mt-2">
+        <mat-form-field>
+          <mat-label i18n="Shorts setting">Shorts</mat-label>
+          <mat-select [(ngModel)]="shortsMode">
+            @for (shorts_mode_option of shorts_mode_options; track shorts_mode_option) {
+              <mat-option [value]="shorts_mode_option['value']">{{shorts_mode_option['label']}}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </div>
       <div class="col-12">
         <div>
           <mat-checkbox [(ngModel)]="audioOnlyMode"><ng-container i18n="Streaming-only mode">Audio-only mode</ng-container></mat-checkbox>

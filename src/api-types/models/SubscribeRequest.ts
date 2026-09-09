@@ -13,4 +13,5 @@ export type SubscribeRequest = {
     autoCreatePlaylist?: boolean;
     maxQuality?: string;
     audioFormat?: string;
+    shortsMode?: 'all' | 'exclude' | 'only';
 };

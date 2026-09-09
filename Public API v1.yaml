@@ -2366,6 +2366,15 @@ components:
           type: boolean
         maxQuality:
           type: string
+        audioFormat:
+          type: string
+        shortsMode:
+          type: string
+          enum:
+            - all
+            - exclude
+            - only
+          description: Which YouTube Shorts to download. Defaults to all.
     SubscribeResponse:
       required:
         - new_sub
@@ -3292,6 +3301,12 @@ components:
           type: string
         timerange:
           type: string
+        shorts_mode:
+          type: string
+          enum:
+            - all
+            - exclude
+            - only
         custom_args:
           type: string
         custom_output:

@@ -44,7 +44,31 @@ describe('SubscribeDialogComponent', () => {
       component.customFileOutput,
       component.useSubfolder,
       true,
-      component.audioFormat
+      component.audioFormat,
+      component.shortsMode
+    );
+  });
+
+  it('should send the selected shorts mode when subscribing', () => {
+    const postsService = TestBed.inject(PostsService) as any;
+    postsService.createSubscription = vi.fn().mockReturnValue(of({new_sub: {id: 'subscription-1'}}));
+    component.url = 'https://example.com/channel';
+    component.shortsMode = 'exclude';
+
+    component.subscribeClicked();
+
+    expect(postsService.createSubscription).toHaveBeenCalledWith(
+      component.url,
+      component.name,
+      null,
+      component.maxQuality,
+      component.audioOnlyMode,
+      component.customArgs,
+      component.customFileOutput,
+      component.useSubfolder,
+      component.autoCreatePlaylist,
+      component.audioFormat,
+      'exclude'
     );
   });
 });

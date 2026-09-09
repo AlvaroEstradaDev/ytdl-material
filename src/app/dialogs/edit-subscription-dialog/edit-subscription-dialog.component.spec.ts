@@ -53,4 +53,17 @@ describe('EditSubscriptionDialogComponent', () => {
     expect('timerange' in component.new_sub).toBe(false);
     expect(component.subChanged()).toBe(false);
   });
+
+  it('defaults legacy subscriptions to all shorts and tracks shorts mode changes', () => {
+    // the dialog data stub has no shorts_mode, matching subscriptions created before the setting existed
+    expect(component.sub.shorts_mode).toBe('all');
+    expect(component.new_sub.shorts_mode).toBe('all');
+    expect(component.subChanged()).toBe(false);
+
+    component.new_sub.shorts_mode = 'only';
+    expect(component.subChanged()).toBe(true);
+
+    component.new_sub.shorts_mode = 'all';
+    expect(component.subChanged()).toBe(false);
+  });
 });

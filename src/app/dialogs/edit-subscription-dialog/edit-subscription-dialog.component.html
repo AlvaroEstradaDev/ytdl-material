@@ -67,6 +67,16 @@
           </mat-select>
         </mat-form-field>
       </div>
+      <div class="col-12 mt-2">
+        <mat-form-field>
+          <mat-label i18n="Shorts setting">Shorts</mat-label>
+          <mat-select [(ngModel)]="new_sub.shorts_mode">
+            @for (shorts_mode_option of shorts_mode_options; track shorts_mode_option) {
+              <mat-option [value]="shorts_mode_option['value']">{{shorts_mode_option['label']}}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </div>
       <div class="col-12 mb-3">
         <mat-form-field color="accent">
           <mat-label i18n="Custom args">Custom args</mat-label>

@@ -63,6 +63,21 @@ export class EditSubscriptionDialogComponent implements OnInit {
     'year'
   ];
 
+  shorts_mode_options = [
+    {
+      'label': $localize`All videos`,
+      'value': 'all'
+    },
+    {
+      'label': $localize`Skip Shorts`,
+      'value': 'exclude'
+    },
+    {
+      'label': $localize`Only Shorts`,
+      'value': 'only'
+    }
+  ];
+
   constructor(@Inject(MAT_DIALOG_DATA) public data: any, private dialog: MatDialog, private postsService: PostsService) {
     this.sub = JSON.parse(JSON.stringify(this.data.sub));
     this.new_sub = JSON.parse(JSON.stringify(this.sub));
@@ -73,6 +88,10 @@ export class EditSubscriptionDialogComponent implements OnInit {
     // Normalize an explicit null so it compares the same as an absent timerange.
     this.sub.timerange = this.sub.timerange || undefined;
     this.new_sub.timerange = this.new_sub.timerange || undefined;
+    // Subscriptions created before the shorts setting exists have no shorts_mode;
+    // defaulting both copies keeps the editor from starting out dirty.
+    this.sub.shorts_mode = this.normalizeShortsMode(this.sub.shorts_mode);
+    this.new_sub.shorts_mode = this.sub.shorts_mode;
 
     // ignore videos to keep requests small
     delete this.sub['videos'];
@@ -154,6 +173,10 @@ export class EditSubscriptionDialogComponent implements OnInit {
     } else {
       delete this.new_sub.audio_format;
     }
+  }
+
+  normalizeShortsMode(shorts_mode: any): 'all' | 'exclude' | 'only' {
+    return shorts_mode === 'exclude' || shorts_mode === 'only' ? shorts_mode : 'all';
   }
 
   // modify custom args
