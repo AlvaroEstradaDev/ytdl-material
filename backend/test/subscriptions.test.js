@@ -1362,6 +1362,242 @@ describe('Subscriptions', function() {
         const archived_items = await db_api.getRecords('archives', {sub_id: sub.id});
         assert.strictEqual(archived_items.length, 0);
     });
+    it('Detects shorts URLs in flat playlist entries', async function() {
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({url: 'https://www.youtube.com/shorts/shorts-video'}), true);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({webpage_url: 'https://www.youtube.com/shorts/shorts-video'}), true);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({original_url: 'https://www.youtube.com/shorts/shorts-video'}), true);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({url: 'https://m.youtube.com/shorts/shorts-video'}), true);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({url: 'https://www.youtube.com/watch?v=regular-video'}), false);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({url: 'https://www.youtube.com/@channel/shorts'}), false);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({url: 'https://vimeo.com/shorts/shorts-video'}), false);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({url: 'https://notyoutube.com/shorts/shorts-video'}), false);
+        // youtu.be is a content-agnostic shortener: a Short and a regular video
+        // share the same form, so it must never match (yt-dlp canonicalizes
+        // these to watch URLs anyway).
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({url: 'https://youtu.be/shorts-video'}), false);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput({}), false);
+        assert.strictEqual(subscriptions_api.isShortsSubscriptionOutput(null), false);
+
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode('exclude'), 'exclude');
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode('only'), 'only');
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode('all'), 'all');
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode(undefined), 'all');
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode('bogus'), 'all');
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode(null), 'all');
+    });
+    it('Skips YouTube Shorts when the subscription excludes shorts', async function() {
+        const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
+        const sub = Object.assign({}, new_sub, {id: uuid(), name: 'exclude_shorts_sub', shorts_mode: 'exclude'});
+        const regular_output = {
+            _type: 'url',
+            ie_key: 'Youtube',
+            extractor: 'youtube',
+            extractor_key: 'Youtube',
+            id: 'regular-video',
+            url: 'https://www.youtube.com/watch?v=regular-video',
+            webpage_url: 'https://www.youtube.com/watch?v=regular-video',
+            original_url: 'https://www.youtube.com/watch?v=regular-video',
+            title: 'Regular video',
+            availability: null
+        };
+        const shorts_output = {
+            _type: 'url',
+            ie_key: 'Youtube',
+            extractor: 'youtube',
+            extractor_key: 'Youtube',
+            id: 'shorts-video',
+            url: 'https://www.youtube.com/shorts/shorts-video',
+            webpage_url: 'https://www.youtube.com/shorts/shorts-video',
+            original_url: 'https://www.youtube.com/shorts/shorts-video',
+            title: 'Shorts video',
+            availability: null
+        };
+        const non_youtube_output = {
+            _type: 'url',
+            ie_key: 'Vimeo',
+            extractor: 'vimeo',
+            extractor_key: 'Vimeo',
+            id: 'vimeo-video',
+            url: 'https://vimeo.com/987654321',
+            webpage_url: 'https://vimeo.com/987654321',
+            original_url: 'https://vimeo.com/987654321',
+            title: 'Vimeo video',
+            availability: null
+        };
+
+        youtubedl_api.runYoutubeDLLineStream = async (requested_url, args, line_handlers = {}) => {
+            if (typeof line_handlers.onStdoutLine === 'function') {
+                line_handlers.onStdoutLine(JSON.stringify(regular_output));
+                line_handlers.onStdoutLine(JSON.stringify(shorts_output));
+                line_handlers.onStdoutLine(JSON.stringify(non_youtube_output));
+            }
+            return {
+                child_process: {pid: 4321},
+                callback: Promise.resolve({err: null})
+            };
+        };
+
+        try {
+            await subscriptions_api.subscribe(sub, null, true);
+            const started = await subscriptions_api.getVideosForSub(sub.id);
+            assert.strictEqual(started, true);
+
+            const completed = await waitForCondition(async () => {
+                const refreshed_sub = await subscriptions_api.getSubscription(sub.id);
+                return !!(refreshed_sub && !refreshed_sub.downloading);
+            });
+            assert.strictEqual(completed, true);
+        } finally {
+            youtubedl_api.runYoutubeDLLineStream = original_runYoutubeDLLineStream;
+        }
+
+        const queued_downloads = await db_api.getRecords('download_queue', {sub_id: sub.id});
+        assert.strictEqual(queued_downloads.length, 2);
+        assert.deepStrictEqual(queued_downloads.map(download => download.url).sort(), [non_youtube_output.webpage_url, regular_output.webpage_url].sort());
+
+        // excluded shorts are not archived so switching shorts_mode back stays reversible
+        const archived_items = await db_api.getRecords('archives', {sub_id: sub.id});
+        assert.strictEqual(archived_items.length, 0);
+
+        const refreshed_sub = await subscriptions_api.getSubscription(sub.id);
+        assert.strictEqual(refreshed_sub.refresh_status.queued_count, 2);
+        assert.strictEqual(refreshed_sub.refresh_status.skipped_count, 1);
+        assert.strictEqual(refreshed_sub.refresh_status.new_items_count, 3);
+    });
+    it('Downloads only YouTube Shorts when the subscription is shorts-only', async function() {
+        const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
+        const sub = Object.assign({}, new_sub, {id: uuid(), name: 'only_shorts_sub', shorts_mode: 'only'});
+        const regular_output = {
+            _type: 'url',
+            ie_key: 'Youtube',
+            extractor: 'youtube',
+            extractor_key: 'Youtube',
+            id: 'regular-video',
+            url: 'https://www.youtube.com/watch?v=regular-video',
+            webpage_url: 'https://www.youtube.com/watch?v=regular-video',
+            original_url: 'https://www.youtube.com/watch?v=regular-video',
+            title: 'Regular video',
+            availability: null
+        };
+        const shorts_output = {
+            _type: 'url',
+            ie_key: 'Youtube',
+            extractor: 'youtube',
+            extractor_key: 'Youtube',
+            id: 'shorts-video',
+            url: 'https://www.youtube.com/shorts/shorts-video',
+            webpage_url: 'https://www.youtube.com/shorts/shorts-video',
+            original_url: 'https://www.youtube.com/shorts/shorts-video',
+            title: 'Shorts video',
+            availability: null
+        };
+        const non_youtube_output = {
+            _type: 'url',
+            ie_key: 'Vimeo',
+            extractor: 'vimeo',
+            extractor_key: 'Vimeo',
+            id: 'vimeo-video',
+            url: 'https://vimeo.com/987654321',
+            webpage_url: 'https://vimeo.com/987654321',
+            original_url: 'https://vimeo.com/987654321',
+            title: 'Vimeo video',
+            availability: null
+        };
+
+        youtubedl_api.runYoutubeDLLineStream = async (requested_url, args, line_handlers = {}) => {
+            if (typeof line_handlers.onStdoutLine === 'function') {
+                line_handlers.onStdoutLine(JSON.stringify(regular_output));
+                line_handlers.onStdoutLine(JSON.stringify(shorts_output));
+                line_handlers.onStdoutLine(JSON.stringify(non_youtube_output));
+            }
+            return {
+                child_process: {pid: 4321},
+                callback: Promise.resolve({err: null})
+            };
+        };
+
+        try {
+            await subscriptions_api.subscribe(sub, null, true);
+            const started = await subscriptions_api.getVideosForSub(sub.id);
+            assert.strictEqual(started, true);
+
+            const completed = await waitForCondition(async () => {
+                const refreshed_sub = await subscriptions_api.getSubscription(sub.id);
+                return !!(refreshed_sub && !refreshed_sub.downloading);
+            });
+            assert.strictEqual(completed, true);
+        } finally {
+            youtubedl_api.runYoutubeDLLineStream = original_runYoutubeDLLineStream;
+        }
+
+        const queued_downloads = await db_api.getRecords('download_queue', {sub_id: sub.id});
+        assert.strictEqual(queued_downloads.length, 2);
+        assert.deepStrictEqual(queued_downloads.map(download => download.url).sort(), [non_youtube_output.webpage_url, shorts_output.webpage_url].sort());
+
+        const archived_items = await db_api.getRecords('archives', {sub_id: sub.id});
+        assert.strictEqual(archived_items.length, 0);
+
+        const refreshed_sub = await subscriptions_api.getSubscription(sub.id);
+        assert.strictEqual(refreshed_sub.refresh_status.queued_count, 2);
+        assert.strictEqual(refreshed_sub.refresh_status.skipped_count, 1);
+        assert.strictEqual(refreshed_sub.refresh_status.new_items_count, 3);
+    });
+    it('Downloads YouTube Shorts by default and with unknown shorts modes', async function() {
+        const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
+        const default_sub = Object.assign({}, new_sub, {id: uuid(), name: 'default_shorts_sub'});
+        const bogus_sub = Object.assign({}, new_sub, {id: uuid(), name: 'bogus_shorts_sub', shorts_mode: 'bogus'});
+        const shorts_output = {
+            _type: 'url',
+            ie_key: 'Youtube',
+            extractor: 'youtube',
+            extractor_key: 'Youtube',
+            id: 'shorts-video',
+            url: 'https://www.youtube.com/shorts/shorts-video',
+            webpage_url: 'https://www.youtube.com/shorts/shorts-video',
+            original_url: 'https://www.youtube.com/shorts/shorts-video',
+            title: 'Shorts video',
+            availability: null
+        };
+
+        youtubedl_api.runYoutubeDLLineStream = async (requested_url, args, line_handlers = {}) => {
+            if (typeof line_handlers.onStdoutLine === 'function') {
+                line_handlers.onStdoutLine(JSON.stringify(shorts_output));
+            }
+            return {
+                child_process: {pid: 4321},
+                callback: Promise.resolve({err: null})
+            };
+        };
+
+        try {
+            await subscriptions_api.subscribe(default_sub, null, true);
+            await subscriptions_api.subscribe(bogus_sub, null, true);
+            const default_started = await subscriptions_api.getVideosForSub(default_sub.id);
+            assert.strictEqual(default_started, true);
+            const bogus_started = await subscriptions_api.getVideosForSub(bogus_sub.id);
+            assert.strictEqual(bogus_started, true);
+
+            const completed = await waitForCondition(async () => {
+                const refreshed_default_sub = await subscriptions_api.getSubscription(default_sub.id);
+                const refreshed_bogus_sub = await subscriptions_api.getSubscription(bogus_sub.id);
+                return !!(refreshed_default_sub && !refreshed_default_sub.downloading && refreshed_bogus_sub && !refreshed_bogus_sub.downloading);
+            });
+            assert.strictEqual(completed, true);
+        } finally {
+            youtubedl_api.runYoutubeDLLineStream = original_runYoutubeDLLineStream;
+        }
+
+        const default_queued_downloads = await db_api.getRecords('download_queue', {sub_id: default_sub.id});
+        assert.strictEqual(default_queued_downloads.length, 1);
+        assert.strictEqual(default_queued_downloads[0].url, shorts_output.webpage_url);
+
+        const bogus_queued_downloads = await db_api.getRecords('download_queue', {sub_id: bogus_sub.id});
+        assert.strictEqual(bogus_queued_downloads.length, 1);
+        assert.strictEqual(bogus_queued_downloads[0].url, shorts_output.webpage_url);
+
+        const refreshed_default_sub = await subscriptions_api.getSubscription(default_sub.id);
+        assert.strictEqual(refreshed_default_sub.refresh_status.skipped_count, 0);
+    });
     it('Uses full metadata discovery for timeranged subscriptions so date filters are honored', async function() {
         const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
         const sub = Object.assign({}, new_sub, {

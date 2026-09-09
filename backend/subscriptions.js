@@ -69,6 +69,8 @@ const MATCH_FILTER_ARGS = new Set(['--match-filter', '--match-filters']);
 const BREAK_MATCH_FILTER_ARGS = new Set(['--break-match-filter', '--break-match-filters']);
 const NO_MATCH_FILTER_ARGS = new Set(['--no-match-filter', '--no-match-filters']);
 const JOIN_ONLY_AVAILABILITY_VALUES = new Set(['subscriber_only']);
+const SUBSCRIPTION_SHORTS_MODES = Object.freeze(['all', 'exclude', 'only']);
+const SHORTS_URL_PATTERN = /(^|\.)youtube\.com\/shorts\/[A-Za-z0-9_-]+/i;
 const active_subscription_refresh_trackers = new Map();
 
 function getSubscriptionPendingDownloadProjectionFields() {
@@ -456,6 +458,24 @@ async function archiveSkippedJoinOnlySubscriptionOutput(output_json = null, sub 
     return true;
 }
 
+function normalizeSubscriptionShortsMode(shorts_mode) {
+    return SUBSCRIPTION_SHORTS_MODES.includes(shorts_mode) ? shorts_mode : 'all';
+}
+exports.normalizeSubscriptionShortsMode = normalizeSubscriptionShortsMode;
+
+// yt-dlp reports Shorts entries with youtube.com/shorts/<id> URLs while regular
+// uploads use watch URLs, so the URL shape is the only reliable discriminator
+// (durations overlap between Shorts and short regular videos). The host is
+// pinned so a /shorts/ path on another site can never match, and youtu.be is
+// deliberately excluded — the shortener is content-agnostic and yt-dlp
+// canonicalizes those links to watch URLs anyway.
+function isShortsSubscriptionOutput(output_json = null) {
+    if (!output_json || typeof output_json !== 'object') return false;
+    return [output_json.url, output_json.webpage_url, output_json.original_url]
+        .some(candidate => typeof candidate === 'string' && SHORTS_URL_PATTERN.test(candidate));
+}
+exports.isShortsSubscriptionOutput = isShortsSubscriptionOutput;
+
 async function shouldSkipSubscriptionOutput(output_json = null, sub = null, discovery_filter_context = null, skip_context = null) {
     if (!output_json || typeof output_json !== 'object') return true;
 
@@ -464,6 +484,19 @@ async function shouldSkipSubscriptionOutput(output_json = null, sub = null, disc
         if (skip_context) skip_context.skipped_count = asFiniteCount(skip_context.skipped_count, 0) + 1;
         logger.info(`Skipping join-only subscription video '${output_json.webpage_url || output_json.url || output_json.id}'.`);
         return true;
+    }
+
+    // Shorts only exist on YouTube; entries from other sources pass through so
+    // 'only' degrades to 'all' there instead of skipping everything.
+    const shorts_mode = normalizeSubscriptionShortsMode(sub && sub.shorts_mode);
+    if (shorts_mode !== 'all' && isYouTubeSubscriptionOutput(output_json)) {
+        const output_is_shorts = isShortsSubscriptionOutput(output_json);
+        const skipped_by_shorts_mode = shorts_mode === 'exclude' ? output_is_shorts : !output_is_shorts;
+        if (skipped_by_shorts_mode) {
+            if (skip_context) skip_context.skipped_count = asFiniteCount(skip_context.skipped_count, 0) + 1;
+            logger.verbose(`Skipping subscription video '${output_json.webpage_url || output_json.url || output_json.id}' because of the subscription's shorts setting (${shorts_mode}).`);
+            return true;
+        }
     }
 
     const match_filters = discovery_filter_context && Array.isArray(discovery_filter_context.match_filters)
