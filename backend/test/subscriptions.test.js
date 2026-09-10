@@ -668,6 +668,19 @@ describe('Subscriptions', function() {
         const updated_sub = await db_api.getRecord('subscriptions', {id: new_sub['id']});
         assert(updated_sub['name'] === 'updated_name');
     });
+    it('Clears stored audio_formats when the subscription update sends null', async function () {
+        const sub = Object.assign({}, new_sub, {id: uuid(), name: 'audio_formats_optout_sub', audio_formats: {short: 'mp3', long: 'opus'}});
+        await subscriptions_api.subscribe(sub, null, true);
+        const opted_in_sub = await db_api.getRecord('subscriptions', {id: sub.id});
+        assert(opted_in_sub.audio_formats);
+
+        // the edit dialog sends audio_formats: null on opt-out; the merge-only
+        // update must still overwrite the stored object with the null
+        const sub_update = Object.assign({}, sub, {audio_formats: null});
+        assert.strictEqual(await subscriptions_api.updateSubscription(sub_update), true);
+        const updated_sub = await subscriptions_api.getSubscription(sub.id);
+        assert(!updated_sub.audio_formats);
+    });
     it('Backfills and appends to an automatic subscription playlist', async function () {
         const sub = Object.assign({}, new_sub, {
             id: uuid(),

@@ -83,7 +83,9 @@ describe('EditSubscriptionDialogComponent', () => {
 
     component.saveSubscription();
 
-    expect(component.new_sub.audio_formats).toBeUndefined();
+    // null (not undefined) so the key survives JSON serialization and the
+    // merge-only backend update actually deletes the stored audio_formats
+    expect(component.new_sub.audio_formats).toBeNull();
   });
 
   it('should persist only explicit buckets when the toggle is on', () => {

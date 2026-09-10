@@ -197,11 +197,13 @@ export class EditSubscriptionDialogComponent implements OnInit {
   audioFormatsChanged() {
     if (this.multiLengthAudioFormats) {
       const explicit_buckets = Object.entries(this.audioFormats).filter(([, format]) => !!format);
+      // null (not undefined) so the key survives JSON serialization and the
+      // merge-only backend update actually deletes the stored audio_formats
       this.new_sub.audio_formats = explicit_buckets.length > 0
         ? Object.fromEntries(explicit_buckets)
-        : undefined;
+        : null;
     } else {
-      this.new_sub.audio_formats = undefined;
+      this.new_sub.audio_formats = null;
     }
   }
 
