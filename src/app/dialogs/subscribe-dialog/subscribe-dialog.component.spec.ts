@@ -45,7 +45,8 @@ describe('SubscribeDialogComponent', () => {
       component.useSubfolder,
       true,
       component.audioFormat,
-      component.shortsMode
+      component.shortsMode,
+      null
     );
   });
 
@@ -68,7 +69,34 @@ describe('SubscribeDialogComponent', () => {
       component.useSubfolder,
       component.autoCreatePlaylist,
       component.audioFormat,
-      'exclude'
+      'exclude',
+      null
+    );
+  });
+
+  it('should send per-length audio formats when the toggle is on', () => {
+    const postsService = TestBed.inject(PostsService) as any;
+    postsService.createSubscription = vi.fn().mockReturnValue(of({new_sub: {id: 'subscription-1'}}));
+    component.url = 'https://example.com/channel';
+    component.audioOnlyMode = true;
+    component.multiLengthAudioFormats = true;
+    component.audioFormats = {short: 'mp3', medium: null, long: 'opus'};
+
+    component.subscribeClicked();
+
+    expect(postsService.createSubscription).toHaveBeenCalledWith(
+      component.url,
+      component.name,
+      null,
+      component.maxQuality,
+      component.audioOnlyMode,
+      component.customArgs,
+      component.customFileOutput,
+      component.useSubfolder,
+      component.autoCreatePlaylist,
+      null,            // single format hidden while the toggle is on
+      component.shortsMode,
+      {short: 'mp3', long: 'opus'}
     );
   });
 });

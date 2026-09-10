@@ -24,6 +24,8 @@ export class EditSubscriptionDialogComponent implements OnInit {
   audioOnlyMode = null;
   download_all = null;
   audioFormat: string = null;
+  multiLengthAudioFormats = false;
+  audioFormats: {short?: string; medium?: string; long?: string} = {short: null, medium: null, long: null};
 
   available_qualities = [
     {
@@ -93,6 +95,17 @@ export class EditSubscriptionDialogComponent implements OnInit {
     this.sub.shorts_mode = this.normalizeShortsMode(this.sub.shorts_mode);
     this.new_sub.shorts_mode = this.sub.shorts_mode;
 
+    // Subscriptions without audio_formats keep legacy single-format behavior;
+    // defaulting both copies keeps the editor from starting out dirty.
+    this.multiLengthAudioFormats = !!this.sub.audio_formats;
+    this.audioFormats = {
+      short: this.sub.audio_formats && this.sub.audio_formats.short || null,
+      medium: this.sub.audio_formats && this.sub.audio_formats.medium || null,
+      long: this.sub.audio_formats && this.sub.audio_formats.long || null
+    };
+    this.sub.audio_formats = this.multiLengthAudioFormats ? JSON.parse(JSON.stringify(this.sub.audio_formats)) : undefined;
+    this.new_sub.audio_formats = this.sub.audio_formats;
+
     // ignore videos to keep requests small
     delete this.sub['videos'];
     delete this.new_sub['videos'];
@@ -130,7 +143,13 @@ export class EditSubscriptionDialogComponent implements OnInit {
   }
 
   saveSubscription() {
-    this.audioFormatChanged();
+    this.audioFormatsChanged();
+    if (this.multiLengthAudioFormats) {
+      // the single-format dropdown is hidden while multi-length is on; don't ghost-write it
+      delete this.new_sub.audio_format;
+    } else {
+      this.audioFormatChanged();
+    }
     this.postsService.updateSubscription(this.new_sub).subscribe(res => {
       this.sub = this.new_sub;
       this.new_sub = JSON.parse(JSON.stringify(this.sub));
@@ -172,6 +191,17 @@ export class EditSubscriptionDialogComponent implements OnInit {
       this.new_sub.audio_format = this.audioFormat;
     } else {
       delete this.new_sub.audio_format;
+    }
+  }
+
+  audioFormatsChanged() {
+    if (this.multiLengthAudioFormats) {
+      const explicit_buckets = Object.entries(this.audioFormats).filter(([, format]) => !!format);
+      this.new_sub.audio_formats = explicit_buckets.length > 0
+        ? Object.fromEntries(explicit_buckets)
+        : undefined;
+    } else {
+      this.new_sub.audio_formats = undefined;
     }
   }
 

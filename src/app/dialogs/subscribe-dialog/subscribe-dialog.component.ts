@@ -48,6 +48,8 @@ export class SubscribeDialogComponent implements OnInit {
   customFileOutput = '';
   customArgs = '';
   audioFormat: string = null;
+  multiLengthAudioFormats = false;
+  audioFormats: {short?: string; medium?: string; long?: string} = {short: null, medium: null, long: null};
 
   available_qualities = [
     {
@@ -107,9 +109,13 @@ export class SubscribeDialogComponent implements OnInit {
       if (!this.download_all) {
         timerange = 'now-' + this.timerange_amount.toString() + this.timerange_unit;
       }
+      const audioFormats = this.multiLengthAudioFormats
+          ? Object.entries(this.audioFormats).reduce((acc, [bucket, format]) => format ? {...acc, [bucket]: format} : acc, {})
+          : null;
+      const audioFormat = this.multiLengthAudioFormats ? null : this.audioFormat;
       this.postsService.createSubscription(this.url, this.name, timerange, this.maxQuality,
                                           this.audioOnlyMode, this.customArgs, this.customFileOutput, this.useSubfolder,
-                                          this.autoCreatePlaylist, this.audioFormat, this.shortsMode).subscribe(res => {
+                                          this.autoCreatePlaylist, audioFormat, this.shortsMode, audioFormats).subscribe(res => {
         this.subscribing = false;
         if (res['new_sub']) {
           this.dialogRef.close(res['new_sub']);
