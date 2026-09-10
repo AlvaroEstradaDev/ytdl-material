@@ -464,6 +464,20 @@ function normalizeSubscriptionShortsMode(shorts_mode) {
 }
 exports.normalizeSubscriptionShortsMode = normalizeSubscriptionShortsMode;
 
+const SUBSCRIPTION_AUDIO_FORMAT_BUCKETS = ['short', 'medium', 'long'];
+
+// Returns only the valid per-length audio format buckets, or null when the
+// subscription has not opted in (nothing valid was provided).
+exports.normalizeSubscriptionAudioFormats = (audio_formats) => {
+    if (!audio_formats || typeof audio_formats !== 'object' || Array.isArray(audio_formats)) return null;
+    const normalized = {};
+    for (const bucket of SUBSCRIPTION_AUDIO_FORMAT_BUCKETS) {
+        const format = audio_formats[bucket];
+        if (utils.AUDIO_FORMATS.includes(format)) normalized[bucket] = format;
+    }
+    return Object.keys(normalized).length > 0 ? normalized : null;
+};
+
 // yt-dlp reports Shorts entries with youtube.com/shorts/<id> URLs while regular
 // uploads use watch URLs, so the URL shape is the only reliable discriminator
 // (durations overlap between Shorts and short regular videos). The host is

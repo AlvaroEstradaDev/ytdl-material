@@ -17,6 +17,7 @@ export type Subscription = {
     archive?: string;
     timerange?: string;
     shorts_mode?: 'all' | 'exclude' | 'only';
+    audio_formats?: { short?: string; medium?: string; long?: string; };
     custom_args?: string;
     custom_output?: string;
     audio_format?: string;

@@ -14,4 +14,5 @@ export type SubscribeRequest = {
     maxQuality?: string;
     audioFormat?: string;
     shortsMode?: 'all' | 'exclude' | 'only';
+    audioFormats?: { short?: string; medium?: string; long?: string; };
 };

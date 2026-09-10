@@ -2375,6 +2375,16 @@ components:
             - exclude
             - only
           description: Which YouTube Shorts to download. Defaults to all.
+        audioFormats:
+          type: object
+          description: Per-length audio formats for audio-only subscriptions. Each bucket falls back to the instance's global settings.
+          properties:
+            short:
+              type: string
+            medium:
+              type: string
+            long:
+              type: string
     SubscribeResponse:
       required:
         - new_sub
@@ -3307,6 +3317,16 @@ components:
             - all
             - exclude
             - only
+        audio_formats:
+          type: object
+          description: Per-length audio formats for audio-only subscriptions. Each bucket falls back to the instance's global settings.
+          properties:
+            short:
+              type: string
+            medium:
+              type: string
+            long:
+              type: string
         custom_args:
           type: string
         custom_output:

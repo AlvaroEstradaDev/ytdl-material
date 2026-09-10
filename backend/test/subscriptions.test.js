@@ -1385,6 +1385,14 @@ describe('Subscriptions', function() {
         assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode('bogus'), 'all');
         assert.strictEqual(subscriptions_api.normalizeSubscriptionShortsMode(null), 'all');
     });
+    it('Normalizes subscription audio formats', async function() {
+        assert.deepStrictEqual(subscriptions_api.normalizeSubscriptionAudioFormats({short: 'mp3', medium: 'opus', long: 'flac'}), {short: 'mp3', medium: 'opus', long: 'flac'});
+        assert.deepStrictEqual(subscriptions_api.normalizeSubscriptionAudioFormats({short: 'bogus', medium: 'wav'}), {medium: 'wav'});
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionAudioFormats({short: 'bogus'}), null);
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionAudioFormats(null), null);
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionAudioFormats('mp3'), null);
+        assert.strictEqual(subscriptions_api.normalizeSubscriptionAudioFormats(['mp3']), null);
+    });
     it('Skips YouTube Shorts when the subscription excludes shorts', async function() {
         const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
         const sub = Object.assign({}, new_sub, {id: uuid(), name: 'exclude_shorts_sub', shorts_mode: 'exclude'});
