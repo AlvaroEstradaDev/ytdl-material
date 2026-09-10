@@ -110,6 +110,66 @@
               </mat-form-field>
             </div>
             <div class="col-12 mt-3">
+              <mat-checkbox [(ngModel)]="new_config['Downloader']['multi-length-audio-formats']"><ng-container i18n="Multi-length audio formats toggle">Use different audio formats by video length</ng-container></mat-checkbox>
+            </div>
+            @if (new_config['Downloader']['multi-length-audio-formats']) {
+              <div class="col-12 mt-3">
+                <mat-form-field class="text-field" color="accent">
+                  <mat-label i18n="Short length limit">Short length limit (minutes)</mat-label>
+                  <input matInput type="number" min="1" [(ngModel)]="new_config['Downloader']['multi-length-audio-short-limit']">
+                </mat-form-field>
+              </div>
+              <div class="col-12 mt-3">
+                <mat-form-field class="text-field" color="accent">
+                  <mat-label i18n="Long length limit">Long length limit (minutes)</mat-label>
+                  <input matInput type="number" min="1" [(ngModel)]="new_config['Downloader']['multi-length-audio-long-limit']">
+                  <mat-hint><ng-container i18n="Multi-length audio formats hint">Videos under the short limit use the short format. Videos at or above the long limit use the long format. Everything in between uses the medium format.</ng-container></mat-hint>
+                </mat-form-field>
+              </div>
+              <div class="col-12 mt-3">
+                <mat-form-field class="text-field" color="accent">
+                  <mat-label i18n="Short videos audio format">Short videos</mat-label>
+                  <mat-select color="accent" [(ngModel)]="new_config['Downloader']['multi-length-audio-short-format']">
+                    <mat-option [value]="null"><ng-container i18n="Same as audio format option">Same as audio format</ng-container></mat-option>
+                    <mat-option value="mp3">MP3</mat-option>
+                    <mat-option value="opus">Opus</mat-option>
+                    <mat-option value="m4a">M4A (AAC)</mat-option>
+                    <mat-option value="flac">FLAC</mat-option>
+                    <mat-option value="wav">WAV</mat-option>
+                    <mat-option value="vorbis">Vorbis (OGG)</mat-option>
+                  </mat-select>
+                </mat-form-field>
+              </div>
+              <div class="col-12 mt-3">
+                <mat-form-field class="text-field" color="accent">
+                  <mat-label i18n="Medium videos audio format">Medium videos</mat-label>
+                  <mat-select color="accent" [(ngModel)]="new_config['Downloader']['multi-length-audio-medium-format']">
+                    <mat-option [value]="null"><ng-container i18n="Same as audio format option">Same as audio format</ng-container></mat-option>
+                    <mat-option value="mp3">MP3</mat-option>
+                    <mat-option value="opus">Opus</mat-option>
+                    <mat-option value="m4a">M4A (AAC)</mat-option>
+                    <mat-option value="flac">FLAC</mat-option>
+                    <mat-option value="wav">WAV</mat-option>
+                    <mat-option value="vorbis">Vorbis (OGG)</mat-option>
+                  </mat-select>
+                </mat-form-field>
+              </div>
+              <div class="col-12 mt-3">
+                <mat-form-field class="text-field" color="accent">
+                  <mat-label i18n="Long videos audio format">Long videos</mat-label>
+                  <mat-select color="accent" [(ngModel)]="new_config['Downloader']['multi-length-audio-long-format']">
+                    <mat-option [value]="null"><ng-container i18n="Same as audio format option">Same as audio format</ng-container></mat-option>
+                    <mat-option value="mp3">MP3</mat-option>
+                    <mat-option value="opus">Opus</mat-option>
+                    <mat-option value="m4a">M4A (AAC)</mat-option>
+                    <mat-option value="flac">FLAC</mat-option>
+                    <mat-option value="wav">WAV</mat-option>
+                    <mat-option value="vorbis">Vorbis (OGG)</mat-option>
+                  </mat-select>
+                </mat-form-field>
+              </div>
+            }
+            <div class="col-12 mt-3">
               <mat-form-field class="text-field" color="accent">
                 <mat-label i18n="Video folder path">Video folder path</mat-label>
                 <input matInput [(ngModel)]="new_config['Downloader']['path-video']" required>

@@ -126,7 +126,29 @@ export class SettingsComponent implements OnInit {
 
   getConfig(): void {
     this.initial_config = this.postsService.config;
+    this.applyMultiLengthAudioDefaults();
     this.new_config = JSON.parse(JSON.stringify(this.initial_config));
+  }
+
+  // Settings pages load the whole config JSON, which may predate the
+  // multi-length keys; backfilling initial_config keeps the editor from
+  // starting dirty and gives the number inputs real values to show.
+  applyMultiLengthAudioDefaults(): void {
+    const defaults = {
+      'multi-length-audio-formats': false,
+      'multi-length-audio-short-limit': 10,
+      'multi-length-audio-long-limit': 60,
+      'multi-length-audio-short-format': null,
+      'multi-length-audio-medium-format': null,
+      'multi-length-audio-long-format': null
+    };
+    const downloader_config = this.initial_config?.['Downloader'];
+    if (!downloader_config) return;
+    for (const key of Object.keys(defaults)) {
+      if (downloader_config[key] === undefined || downloader_config[key] === null) {
+        downloader_config[key] = defaults[key];
+      }
+    }
   }
 
   getDownloaderInfo(): void {
