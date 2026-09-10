@@ -53,7 +53,8 @@ const SUBSCRIPTION_PENDING_DOWNLOAD_PREFETCHED_INFO_FIELDS = Object.freeze([
     'source_id',
     'id',
     'display_id',
-    'title'
+    'title',
+    'duration'
 ]);
 const SUBSCRIPTION_ARCHIVE_PROJECTION_FIELDS = Object.freeze([
     'extractor',
@@ -1508,12 +1509,23 @@ async function handleOutputJSON(output_jsons, sub, user_uid, refresh_tracker = n
                 .filter(format => !!format && typeof format === 'object')
                 .map(format => utils.stripPropertiesFromObject(format, SUBSCRIPTION_EXPECTED_SIZE_FORMAT_FIELDS, true));
         }
-        await downloader_api.createDownload(file_to_download['webpage_url'], sub.type || 'video', effective_queue_context.base_download_options, user_uid, sub.id, sub.name, prefetched_info);
+        const item_download_options = getDownloadOptionsForSubscriptionItem(sub, effective_queue_context.base_download_options, file_to_download);
+        await downloader_api.createDownload(file_to_download['webpage_url'], sub.type || 'video', item_download_options, user_uid, sub.id, sub.name, prefetched_info);
         effective_queue_context.queued_count += 1;
         await updateSubscriptionRefreshTrackerQueueCounts(refresh_tracker, effective_queue_context);
     }
 
     return effective_queue_context;
+}
+
+// Length-based audio formats: each queued item resolves its own format from the
+// duration in its discovery JSON. base_download_options is built once per
+// refresh and shared by every item, so never mutate it.
+function getDownloadOptionsForSubscriptionItem(sub, base_download_options, file_to_download) {
+    const duration = file_to_download && typeof file_to_download.duration === 'number' ? file_to_download.duration : null;
+    const resolved_audio_format = utils.resolveAudioFormatByDuration(duration, sub && sub.audio_formats ? sub.audio_formats : null);
+    if (!resolved_audio_format) return base_download_options;
+    return Object.assign({}, base_download_options, {audioFormat: resolved_audio_format});
 }
 
 exports.generateOptionsForSubscriptionDownload = (sub, user_uid) => {

@@ -1598,6 +1598,143 @@ describe('Subscriptions', function() {
         const refreshed_default_sub = await subscriptions_api.getSubscription(default_sub.id);
         assert.strictEqual(refreshed_default_sub.refresh_status.skipped_count, 0);
     });
+    it('Stamps per-item audio formats by duration when the subscription opts in', async function() {
+        const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
+        const sub = Object.assign({}, new_sub, {id: uuid(), name: 'multi_length_sub', type: 'audio', audio_formats: {short: 'mp3', long: 'opus'}});
+        const make_output = (id, duration) => ({
+            _type: 'url',
+            ie_key: 'Youtube',
+            extractor: 'youtube',
+            extractor_key: 'Youtube',
+            id: id,
+            url: `https://www.youtube.com/watch?v=${id}`,
+            webpage_url: `https://www.youtube.com/watch?v=${id}`,
+            original_url: `https://www.youtube.com/watch?v=${id}`,
+            title: id,
+            availability: null,
+            duration: duration
+        });
+        // limits default to 10/60 minutes: 5 min -> short, 30 min -> medium (unset), 2 h -> long
+        const short_output = make_output('length-short-video', 300);
+        const medium_output = make_output('length-medium-video', 1800);
+        const long_output = make_output('length-long-video', 7200);
+
+        youtubedl_api.runYoutubeDLLineStream = async (requested_url, args, line_handlers = {}) => {
+            if (typeof line_handlers.onStdoutLine === 'function') {
+                line_handlers.onStdoutLine(JSON.stringify(short_output));
+                line_handlers.onStdoutLine(JSON.stringify(medium_output));
+                line_handlers.onStdoutLine(JSON.stringify(long_output));
+            }
+            return {child_process: {pid: 4321}, callback: Promise.resolve({err: null})};
+        };
+
+        try {
+            await subscriptions_api.subscribe(sub, null, true);
+            const started = await subscriptions_api.getVideosForSub(sub.id);
+            assert.strictEqual(started, true);
+            await waitForCondition(async () => {
+                const refreshed_sub = await subscriptions_api.getSubscription(sub.id);
+                return !!(refreshed_sub && !refreshed_sub.downloading);
+            });
+        } finally {
+            youtubedl_api.runYoutubeDLLineStream = original_runYoutubeDLLineStream;
+        }
+
+        const queued_downloads = await db_api.getRecords('download_queue', {sub_id: sub.id});
+        assert.strictEqual(queued_downloads.length, 3);
+        const format_by_url = {};
+        for (const download of queued_downloads) format_by_url[download.url] = download.options.audioFormat;
+        assert.strictEqual(format_by_url[short_output.webpage_url], 'mp3');
+        // no sub/global medium format -> base behavior; the shared base options carry audioFormat: null
+        assert.strictEqual(format_by_url[medium_output.webpage_url], null);
+        assert.strictEqual(format_by_url[long_output.webpage_url], 'opus');
+
+        // the shared per-refresh options object must not be mutated per item
+        const distinct_options = new Set(queued_downloads.map(download => download.options));
+        assert.strictEqual(distinct_options.size, 3);
+
+        // duration survives into the persisted prefetch projection
+        const short_download = queued_downloads.find(download => download.url === short_output.webpage_url);
+        if (Array.isArray(short_download.prefetched_info) && short_download.prefetched_info.length > 0) {
+            assert.strictEqual(short_download.prefetched_info[0].duration, 300);
+        }
+    });
+
+    it('Stamps audio formats from global settings for subscriptions without overrides', async function() {
+        const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
+        const sub = Object.assign({}, new_sub, {id: uuid(), name: 'global_multi_length_sub', type: 'audio'});
+        const output = {
+            _type: 'url',
+            ie_key: 'Youtube',
+            extractor: 'youtube',
+            extractor_key: 'Youtube',
+            id: 'global-long-video',
+            url: 'https://www.youtube.com/watch?v=global-long-video',
+            webpage_url: 'https://www.youtube.com/watch?v=global-long-video',
+            original_url: 'https://www.youtube.com/watch?v=global-long-video',
+            title: 'Global long video',
+            availability: null,
+            duration: 7200
+        };
+
+        youtubedl_api.runYoutubeDLLineStream = async (requested_url, args, line_handlers = {}) => {
+            if (typeof line_handlers.onStdoutLine === 'function') {
+                line_handlers.onStdoutLine(JSON.stringify(output));
+            }
+            return {child_process: {pid: 4321}, callback: Promise.resolve({err: null})};
+        };
+
+        config_api.setConfigItem('ytdl_multi_length_audio_formats', true);
+        config_api.setConfigItem('ytdl_multi_length_audio_long_format', 'flac');
+        try {
+            await subscriptions_api.subscribe(sub, null, true);
+            const started = await subscriptions_api.getVideosForSub(sub.id);
+            assert.strictEqual(started, true);
+            await waitForCondition(async () => {
+                const refreshed_sub = await subscriptions_api.getSubscription(sub.id);
+                return !!(refreshed_sub && !refreshed_sub.downloading);
+            });
+        } finally {
+            youtubedl_api.runYoutubeDLLineStream = original_runYoutubeDLLineStream;
+            config_api.setConfigItem('ytdl_multi_length_audio_formats', false);
+            config_api.setConfigItem('ytdl_multi_length_audio_long_format', null);
+        }
+
+        const queued_downloads = await db_api.getRecords('download_queue', {sub_id: sub.id});
+        assert.strictEqual(queued_downloads.length, 1);
+        assert.strictEqual(queued_downloads[0].options.audioFormat, 'flac');
+    });
+
+    it('Leaves audio format untouched when the rule is inactive', async function() {
+        const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
+        const sub = Object.assign({}, new_sub, {id: uuid(), name: 'inactive_multi_length_sub', type: 'audio'});
+        const output = {
+            _type: 'url', ie_key: 'Youtube', extractor: 'youtube', extractor_key: 'Youtube',
+            id: 'inactive-video', url: 'https://www.youtube.com/watch?v=inactive-video',
+            webpage_url: 'https://www.youtube.com/watch?v=inactive-video',
+            original_url: 'https://www.youtube.com/watch?v=inactive-video',
+            title: 'Inactive video', availability: null, duration: 7200
+        };
+        youtubedl_api.runYoutubeDLLineStream = async (requested_url, args, line_handlers = {}) => {
+            if (typeof line_handlers.onStdoutLine === 'function') line_handlers.onStdoutLine(JSON.stringify(output));
+            return {child_process: {pid: 4321}, callback: Promise.resolve({err: null})};
+        };
+        try {
+            await subscriptions_api.subscribe(sub, null, true);
+            const started = await subscriptions_api.getVideosForSub(sub.id);
+            assert.strictEqual(started, true);
+            await waitForCondition(async () => {
+                const refreshed_sub = await subscriptions_api.getSubscription(sub.id);
+                return !!(refreshed_sub && !refreshed_sub.downloading);
+            });
+        } finally {
+            youtubedl_api.runYoutubeDLLineStream = original_runYoutubeDLLineStream;
+        }
+        const queued_downloads = await db_api.getRecords('download_queue', {sub_id: sub.id});
+        assert.strictEqual(queued_downloads.length, 1);
+        // unstamped items keep the base options, whose audioFormat is null
+        assert.strictEqual(queued_downloads[0].options.audioFormat, null);
+    });
     it('Uses full metadata discovery for timeranged subscriptions so date filters are honored', async function() {
         const original_runYoutubeDLLineStream = youtubedl_api.runYoutubeDLLineStream;
         const sub = Object.assign({}, new_sub, {
