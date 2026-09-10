@@ -86,6 +86,30 @@ exports.CONFIG_ITEMS = {
         'key': 'ytdl_audio_format',
         'path': 'YtdlMaterial.Downloader.audio-format'
     },
+    'ytdl_multi_length_audio_formats': {
+        'key': 'ytdl_multi_length_audio_formats',
+        'path': 'YtdlMaterial.Downloader.multi-length-audio-formats'
+    },
+    'ytdl_multi_length_audio_short_limit': {
+        'key': 'ytdl_multi_length_audio_short_limit',
+        'path': 'YtdlMaterial.Downloader.multi-length-audio-short-limit'
+    },
+    'ytdl_multi_length_audio_long_limit': {
+        'key': 'ytdl_multi_length_audio_long_limit',
+        'path': 'YtdlMaterial.Downloader.multi-length-audio-long-limit'
+    },
+    'ytdl_multi_length_audio_short_format': {
+        'key': 'ytdl_multi_length_audio_short_format',
+        'path': 'YtdlMaterial.Downloader.multi-length-audio-short-format'
+    },
+    'ytdl_multi_length_audio_medium_format': {
+        'key': 'ytdl_multi_length_audio_medium_format',
+        'path': 'YtdlMaterial.Downloader.multi-length-audio-medium-format'
+    },
+    'ytdl_multi_length_audio_long_format': {
+        'key': 'ytdl_multi_length_audio_long_format',
+        'path': 'YtdlMaterial.Downloader.multi-length-audio-long-format'
+    },
     'ytdl_use_ytdlp_impersonation': {
         'key': 'ytdl_use_ytdlp_impersonation',
         'path': 'YtdlMaterial.Downloader.use_ytdlp_impersonation'

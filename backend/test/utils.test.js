@@ -1,5 +1,6 @@
 /* eslint-disable no-undef */
 const { assert, fs, path, exec, utils } = require('./test-shared');
+const config_api = require('../config');
 
 describe('Utils', async function() {
     it('Strip properties', async function() {
@@ -126,6 +127,58 @@ describe('Utils', async function() {
         };
         const expected = (1500 * 1000 / 8) * 12;
         assert.strictEqual(utils.getExpectedFileSize(info), expected);
+    });
+
+    it('Resolves audio format by video duration', async function() {
+        const set_multi_length_state = (toggle, short_format, medium_format, long_format, short_limit, long_limit) => {
+            config_api.setConfigItem('ytdl_multi_length_audio_formats', toggle);
+            config_api.setConfigItem('ytdl_multi_length_audio_short_format', short_format);
+            config_api.setConfigItem('ytdl_multi_length_audio_medium_format', medium_format);
+            config_api.setConfigItem('ytdl_multi_length_audio_long_format', long_format);
+            config_api.setConfigItem('ytdl_multi_length_audio_short_limit', short_limit);
+            config_api.setConfigItem('ytdl_multi_length_audio_long_limit', long_limit);
+        };
+        try {
+            // disabled global toggle and no overrides -> null
+            set_multi_length_state(false, 'mp3', null, 'opus', 10, 60);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(300), null);
+
+            // global rule on: buckets by duration, unset bucket falls back to base (null)
+            set_multi_length_state(true, 'mp3', null, 'opus', 10, 60);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(299), 'mp3');   // under 10 min
+            assert.strictEqual(utils.resolveAudioFormatByDuration(1800), null);   // medium unset
+            assert.strictEqual(utils.resolveAudioFormatByDuration(3600), 'opus'); // exactly at long limit
+            assert.strictEqual(utils.resolveAudioFormatByDuration(7200), 'opus');
+
+            // subscription overrides win per bucket and fall through per missing bucket
+            const overrides = {short: 'wav', medium: 'flac'};
+            assert.strictEqual(utils.resolveAudioFormatByDuration(300, overrides), 'wav');
+            assert.strictEqual(utils.resolveAudioFormatByDuration(1800, overrides), 'flac');
+            assert.strictEqual(utils.resolveAudioFormatByDuration(7200, overrides), 'opus');
+
+            // invalid override values are ignored, global bucket format still applies
+            assert.strictEqual(utils.resolveAudioFormatByDuration(300, {short: 'bogus'}), 'mp3');
+
+            // a subscription with at least one valid override is opted in even when the toggle is off
+            set_multi_length_state(false, 'mp3', null, 'opus', 10, 60);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(300, {short: 'wav'}), 'wav');
+            assert.strictEqual(utils.resolveAudioFormatByDuration(300, {short: 'bogus'}), null);
+
+            // unknown / non-positive duration -> null
+            set_multi_length_state(true, 'mp3', null, 'opus', 10, 60);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(null), null);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(undefined), null);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(0), null);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(-5), null);
+
+            // invalid limits disable the rule
+            set_multi_length_state(true, 'mp3', null, 'opus', 10, 10);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(300), null);
+            set_multi_length_state(true, 'mp3', null, 'opus', 0, 60);
+            assert.strictEqual(utils.resolveAudioFormatByDuration(300), null);
+        } finally {
+            set_multi_length_state(false, null, null, null, 10, 60);
+        }
     });
 
     describe('snipFile', function() {

@@ -313,6 +313,12 @@ const DEFAULT_CONFIG = {
         "download_rate_limit": "",
         "skip_join_only_videos": false,
         "audio-format": "mp3",
+        "multi-length-audio-formats": false,
+        "multi-length-audio-short-limit": 10,
+        "multi-length-audio-long-limit": 60,
+        "multi-length-audio-short-format": null,
+        "multi-length-audio-medium-format": null,
+        "multi-length-audio-long-format": null,
         "use_ytdlp_impersonation": false,
         "js_runtimes": "",
         "transcoding": false

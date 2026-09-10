@@ -15,6 +15,46 @@ const CONSTS = require('./consts');
 const is_windows = process.platform === 'win32';
 const DEFAULT_INVALID_FILENAME_CHARS = '\\/:*?"<>|';
 
+exports.AUDIO_FORMATS = Object.freeze(['mp3', 'opus', 'm4a', 'flac', 'wav', 'vorbis']);
+
+let multi_length_limits_warning_logged = false;
+function getMultiLengthAudioLimits() {
+    const short_limit = Number(config_api.getConfigItem('ytdl_multi_length_audio_short_limit'));
+    const long_limit = Number(config_api.getConfigItem('ytdl_multi_length_audio_long_limit'));
+    if (!Number.isFinite(short_limit) || !Number.isFinite(long_limit) || short_limit <= 0 || long_limit <= short_limit) {
+        if (!multi_length_limits_warning_logged) {
+            multi_length_limits_warning_logged = true;
+            logger.warn('Invalid multi-length audio limits; length-based audio format selection is disabled until they are corrected.');
+        }
+        return null;
+    }
+    return {short_limit_seconds: short_limit * 60, long_limit_seconds: long_limit * 60};
+}
+
+// Returns the audio format for a video of the given duration (seconds) when
+// length-based selection applies, or null when the caller should keep the
+// existing behavior (base/explicit format). bucket_overrides is a
+// subscription's audio_formats object; a subscription with at least one valid
+// override is opted in even when the global toggle is off.
+exports.resolveAudioFormatByDuration = (duration_seconds, bucket_overrides = null) => {
+    const overrides = bucket_overrides && typeof bucket_overrides === 'object' && !Array.isArray(bucket_overrides) ? bucket_overrides : null;
+    const has_valid_override = !!overrides && Object.values(overrides).some(format => exports.AUDIO_FORMATS.includes(format));
+    if (!has_valid_override && config_api.getConfigItem('ytdl_multi_length_audio_formats') !== true) return null;
+
+    const duration = Number(duration_seconds);
+    if (!Number.isFinite(duration) || duration <= 0) return null;
+
+    const limits = getMultiLengthAudioLimits();
+    if (!limits) return null;
+
+    const bucket = duration < limits.short_limit_seconds ? 'short' : (duration >= limits.long_limit_seconds ? 'long' : 'medium');
+    const candidates = [overrides ? overrides[bucket] : null, config_api.getConfigItem(`ytdl_multi_length_audio_${bucket}_format`)];
+    for (const candidate of candidates) {
+        if (exports.AUDIO_FORMATS.includes(candidate)) return candidate;
+    }
+    return null;
+};
+
 exports.getAudioFormat = () => {
     return config_api.getConfigItem('ytdl_audio_format') || 'mp3';
 };
