@@ -1207,6 +1207,68 @@ describe('Downloader', function() {
         }
     });
 
+    it('Resolves multi-length audio format from duration when collecting info', async function() {
+        const original_get_video_info = downloader_api.getVideoInfoByURL;
+        const info = [{...fixture_single[0], duration: 7200}];
+        downloader_api.getVideoInfoByURL = async () => info;
+        config_api.setConfigItem('ytdl_multi_length_audio_formats', true);
+        config_api.setConfigItem('ytdl_multi_length_audio_long_format', 'opus');
+        try {
+            const download = await downloader_api.createDownload(url, 'audio', {...options, audioFormat: null});
+            await downloader_api.collectInfo(download['uid']);
+            const stored = await db_api.getRecord('download_queue', {uid: download['uid']});
+            assert.strictEqual(stored['options']['audioFormat'], 'opus');
+            const audio_format_index = stored['args'].indexOf('--audio-format');
+            assert.notStrictEqual(audio_format_index, -1);
+            assert.strictEqual(stored['args'][audio_format_index + 1], 'opus');
+        } finally {
+            downloader_api.getVideoInfoByURL = original_get_video_info;
+            config_api.setConfigItem('ytdl_multi_length_audio_formats', false);
+            config_api.setConfigItem('ytdl_multi_length_audio_long_format', null);
+        }
+    });
+
+    it('Keeps an explicit audio format over the multi-length rule', async function() {
+        const original_get_video_info = downloader_api.getVideoInfoByURL;
+        const info = [{...fixture_single[0], duration: 7200}];
+        downloader_api.getVideoInfoByURL = async () => info;
+        config_api.setConfigItem('ytdl_multi_length_audio_formats', true);
+        config_api.setConfigItem('ytdl_multi_length_audio_long_format', 'opus');
+        try {
+            const download = await downloader_api.createDownload(url, 'audio', {...options, audioFormat: 'flac'});
+            await downloader_api.collectInfo(download['uid']);
+            const stored = await db_api.getRecord('download_queue', {uid: download['uid']});
+            assert.strictEqual(stored['options']['audioFormat'], 'flac');
+            const audio_format_index = stored['args'].indexOf('--audio-format');
+            assert.strictEqual(stored['args'][audio_format_index + 1], 'flac');
+        } finally {
+            downloader_api.getVideoInfoByURL = original_get_video_info;
+            config_api.setConfigItem('ytdl_multi_length_audio_formats', false);
+            config_api.setConfigItem('ytdl_multi_length_audio_long_format', null);
+        }
+    });
+
+    it('Skips multi-length resolution for playlist jobs', async function() {
+        const original_get_video_info = downloader_api.getVideoInfoByURL;
+        const info = [
+            {...fixture_single[0], duration: 7200, playlist_index: 1},
+            {...fixture_single[0], id: `${fixture_single[0].id}-2`, duration: 7200, playlist_index: 2}
+        ];
+        downloader_api.getVideoInfoByURL = async () => info;
+        config_api.setConfigItem('ytdl_multi_length_audio_formats', true);
+        config_api.setConfigItem('ytdl_multi_length_audio_long_format', 'opus');
+        try {
+            const download = await downloader_api.createDownload(url, 'audio', {...options, audioFormat: null});
+            await downloader_api.collectInfo(download['uid']);
+            const stored = await db_api.getRecord('download_queue', {uid: download['uid']});
+            assert.strictEqual(stored['options']['audioFormat'], null);
+        } finally {
+            downloader_api.getVideoInfoByURL = original_get_video_info;
+            config_api.setConfigItem('ytdl_multi_length_audio_formats', false);
+            config_api.setConfigItem('ytdl_multi_length_audio_long_format', null);
+        }
+    });
+
     it('Tag file', async function() {
         // Generated somewhere disposable rather than over the tracked fixture: ffmpeg's
         // output is not byte-stable, so regenerating it in place left the repository

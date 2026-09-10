@@ -2064,6 +2064,18 @@ exports.collectInfo = async (download_uid) => {
         return;
     }
 
+    // Multi-length audio formats: single-video audio downloads resolve their
+    // format from the duration in the info just fetched, mirroring the category
+    // custom_output regeneration below. Playlist jobs keep the base format (one
+    // job applies one audio format), and an explicit audioFormat always wins.
+    if (type === 'audio' && !options.audioFormat && info.length === 1) {
+        const resolved_audio_format = utils.resolveAudioFormatByDuration(info[0]['duration']);
+        if (resolved_audio_format) {
+            options.audioFormat = resolved_audio_format;
+            args = await exports.generateArgs(url, type, options, download['user_uid']);
+        }
+    }
+
     // in subscriptions we don't care if archive mode is enabled, but we already removed archived videos from subs by this point
     const useYoutubeDLArchive = config_api.getConfigItem('ytdl_use_youtubedl_archive');
     if (useYoutubeDLArchive && !options.ignoreArchive && info.length === 1) {
